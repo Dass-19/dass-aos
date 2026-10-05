@@ -1,0 +1,60 @@
+"""Plan management module for creating and archiving task plans."""
+from __future__ import annotations
+
+import datetime as dt
+import re
+from pathlib import Path
+
+from .constants import AOS_DIR_NAME, ENGINE_ROOT, configure_utf8_output
+
+
+def slugify(value: str) -> str:
+    """Normalize string to URL-safe slug."""
+    value = re.sub(r"[^\w\s-]", "", value.lower())
+    return re.sub(r"[-\s]+", "-", value).strip("-")
+
+
+def create_new_plan(
+    project_root: Path,
+    template_type: str = "feature",
+    title: str = "new-task",
+) -> Path:
+    """Create a new active plan from template."""
+    configure_utf8_output()
+    project_root = project_root.resolve()
+
+    # Search for template in .aos/plans/templates or ENGINE_ROOT/plans/templates
+    template_paths = [
+        project_root / AOS_DIR_NAME / "plans" / "templates" / f"{template_type}.md",
+        ENGINE_ROOT / "plans" / "templates" / f"{template_type}.md",
+    ]
+    template_file = next((p for p in template_paths if p.exists()), None)
+
+    if not template_file:
+        raise FileNotFoundError(f"Template '{template_type}' not found in templates directory.")
+
+    content = template_file.read_text(encoding="utf-8")
+
+    now = dt.datetime.now()
+    plan_id = now.strftime("%Y%m%d%H%M")
+    date_str = now.strftime("%Y-%m-%d")
+
+    # Replace placeholders
+    content = content.replace("{{YYYYMMDDHHmm}}", plan_id)
+    content = content.replace("{{YYYY-MM-DD}}", date_str)
+    content = content.replace("{{SHORT_TITLE}}", title)
+    content = content.replace("{{MEASURABLE_CRITERIA}}", f"Implement and verify {title}")
+
+    # Determine next plan index in active/
+    active_dir = project_root / AOS_DIR_NAME / "plans" / "active"
+    active_dir.mkdir(parents=True, exist_ok=True)
+
+    existing = list(active_dir.glob("*.md"))
+    next_index = len(existing) + 1
+    slug = slugify(title)
+    target_filename = f"{next_index:03d}-{slug}.md"
+    target_path = active_dir / target_filename
+
+    target_path.write_text(content, encoding="utf-8")
+    print(f"[plan] CREATED new active plan: {target_path}")
+    return target_path

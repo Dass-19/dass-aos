@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExampleEvent.v1",
+  "type": "object",
+  "required": ["id", "source", "type", "time", "data"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "source": { "type": "string" },
+    "type": { "type": "string", "const": "com.example.event.v1" },
+    "time": { "type": "string", "format": "date-time" },
+    "data": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}
