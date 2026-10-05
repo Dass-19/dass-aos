@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "C:\\Users\\usuario\\Desktop\\yo\\dass-aos"
+      ]
+    },
+    "codebase-memory": {
+      "command": "codebase-memory-mcp",
+      "args": [],
+      "env": {
+        "CODEBASE_MEMORY_DB": "C:\\Users\\usuario\\Desktop\\yo\\dass-aos\\.aos\\memory\\dass-aos.db"
+      }
+    }
+  }
+}

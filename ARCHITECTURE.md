@@ -86,4 +86,4 @@ Los agentes tienen estrictamente prohibido inventar endpoints, parámetros o mod
 
 ## 6. Registro Histórico de ADRs
 - [ADR-001: Plantilla de Architecture Decision Record](file:///decisions/ADR-001-plantilla.md)
-- [ADR-002: Arquitectura Híbrida CLI y Estado Local (.aos/)](file:///decisions/ADR-002-hibrido-cli-estado-local.md)
+- [ADR-002: Arquitectura Híbrida CLI y Estado Local (.aos/)](file:///.aos/decisions/ADR-002-hibrido-cli-estado-local.md)

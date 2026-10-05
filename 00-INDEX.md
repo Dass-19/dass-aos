@@ -33,7 +33,7 @@ dass-aos/ (Motor y CLI)
 │   └── plans.py               ← Lógica para 'aos plan new'
 ├── agents/                    ← Roles base especializados para agentes
 ├── contracts/                 ← Plantillas base de contratos (events, http, schemas)
-├── decisions/                 ← ADRs (Registros de Decisiones de Arquitectura)
+├── decisions/                 ← Plantillas base de ADRs (ADR-001) para nuevos proyectos
 ├── plans/templates/           ← Plantillas de planes (feature, bugfix, refactor, security)
 ├── hooks/                     ← Especificaciones de ciclo de vida
 └── ci/                        ← Plantillas de CI (GitHub Actions, GitLab)

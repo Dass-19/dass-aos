@@ -24,9 +24,13 @@ class TestBootstrap(unittest.TestCase):
         self.assertTrue(aos_dir.exists())
         self.assertTrue((aos_dir / "contracts" / "http").exists())
         self.assertTrue((aos_dir / "contracts" / "events").exists())
+        self.assertTrue((aos_dir / "contracts" / "schemas").exists())
+        self.assertTrue((aos_dir / "contracts" / "schemas" / "README.md").exists())
         self.assertTrue((aos_dir / "plans" / "active").exists())
         self.assertTrue((aos_dir / "knowledge" / "gotchas").exists())
         self.assertTrue((aos_dir / "decisions").exists())
+        self.assertTrue((aos_dir / "decisions" / "ADR-001-plantilla.md").exists())
+        self.assertFalse((aos_dir / "decisions" / "ADR-002-hibrido-cli-estado-local.md").exists())
         self.assertTrue((aos_dir / "memory").exists())
 
         # Check config.json

@@ -1,17 +1,17 @@
-# Contracts Layer (stack-agnostic)
+# Capa de Contratos (Stack-Agnostic)
 
-All public interfaces live here. Agents must never invent endpoints, events, or schemas that are not declared.
+Todas las interfaces públicas del sistema residen aquí. Los agentes nunca deben inventar endpoints, eventos o esquemas que no estén previamente declarados.
 
 ```
 contracts/
-├── events/     # Domain events (CloudEvents-style recommended)
-├── http/       # OpenAPI 3.x fragments or full specs
-└── schemas/    # Shared JSON Schema / equivalent
+├── events/     # Eventos de dominio (recomendado formato estilo CloudEvents)
+├── http/       # Fragmentos o especificaciones completas de OpenAPI 3.x
+└── schemas/    # Esquemas compartidos (JSON Schema o equivalente)
 ```
 
-## Workflow
-1. Write or update the contract **first**.
-2. Run `python aos.py generate-client --contract <spec>` if consumers need typed clients.
-3. Implement against the contract.
-4. Verify with `python aos.py verify` and contract tests.
-5. Breaking changes → new version + ADR when external consumers are affected.
+## Flujo de Trabajo (Contract-First)
+1. Escribir o actualizar el contrato **primero**.
+2. Ejecutar `python aos.py generate-client --contract <spec>` si los consumidores requieren clientes tipados.
+3. Implementar el código contra el contrato establecido.
+4. Validar mediante `python aos.py verify` y pruebas de contrato.
+5. Cambios que rompen compatibilidad (*Breaking Changes*) → nueva versión del contrato y registro de un ADR si afecta a consumidores externos.

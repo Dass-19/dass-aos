@@ -47,6 +47,10 @@ def init_project(
         for item in (engine_contracts / "http").glob("*"):
             if item.is_file() and not (aos_dir / "contracts" / "http" / item.name).exists():
                 shutil.copy2(item, aos_dir / "contracts" / "http" / item.name)
+        if (engine_contracts / "schemas").exists():
+            for item in (engine_contracts / "schemas").glob("*"):
+                if item.is_file() and not (aos_dir / "contracts" / "schemas" / item.name).exists():
+                    shutil.copy2(item, aos_dir / "contracts" / "schemas" / item.name)
 
     # Knowledge
     engine_knowledge = ENGINE_ROOT / "knowledge"
@@ -74,13 +78,14 @@ def init_project(
             if not dest.exists():
                 shutil.copy2(p_file, dest)
 
-    # Decisions (ADRs)
+    # Decisions (ADRs): Solo copiar la plantilla para el proyecto, nunca los ADRs internos del framework
     engine_decisions = ENGINE_ROOT / "decisions"
     if engine_decisions.exists():
-        for d_file in engine_decisions.glob("*.md"):
-            dest = aos_dir / "decisions" / d_file.name
+        plantilla = engine_decisions / "ADR-001-plantilla.md"
+        if plantilla.exists():
+            dest = aos_dir / "decisions" / "ADR-001-plantilla.md"
             if not dest.exists():
-                shutil.copy2(d_file, dest)
+                shutil.copy2(plantilla, dest)
 
     # 3. Create .aos/config.json
     config_file = aos_dir / "config.json"
@@ -126,8 +131,7 @@ def init_project(
     if not pre_commit_py.exists():
         pre_commit_py.write_text(
             '"""Hook de pre-commit para DASS-AOS."""\n'
-            "import sys\n"
-            "from pathlib import Path\n\n"
+            "import sys\n\n"
             "print('Ejecutando comprobaciones pre-commit de DASS-AOS...')\n"
             "# Ejecutar la lógica de verificación aquí\n"
             "sys.exit(0)\n",
