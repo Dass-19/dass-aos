@@ -19,7 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Build CLI argument parser."""
     parser = argparse.ArgumentParser(
         prog="aos",
-        description="DASS-AOS — Agent Operating System (v0.4.0)",
+        description=f"DASS-AOS — Agent Operating System (v{VERSION})",
     )
     parser.add_argument(
         "--version",
@@ -100,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
             print("Instruction files updated:")
             for fname, action in res["sync_results"].items():
                 print(f"  - {fname}: {action}")
-            print("\nNext step: Run 'python aos.py refresh' at the start of each agent session.")
+            print("\nNext step: Run 'aos refresh' at the start of each agent session.")
             return 0
 
         elif args.command == "sync":

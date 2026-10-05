@@ -5,7 +5,7 @@ import datetime as dt
 import re
 from pathlib import Path
 
-from .constants import AOS_DIR_NAME, ENGINE_ROOT, configure_utf8_output
+from .constants import AOS_DIR_NAME, TEMPLATES_DIR, configure_utf8_output
 
 
 def slugify(value: str) -> str:
@@ -23,10 +23,10 @@ def create_new_plan(
     configure_utf8_output()
     project_root = project_root.resolve()
 
-    # Search for template in .aos/plans/templates or ENGINE_ROOT/plans/templates
+    # Search for template in .aos/plans/templates or the packaged templates
     template_paths = [
         project_root / AOS_DIR_NAME / "plans" / "templates" / f"{template_type}.md",
-        ENGINE_ROOT / "plans" / "templates" / f"{template_type}.md",
+        TEMPLATES_DIR / "plans" / "templates" / f"{template_type}.md",
     ]
     template_file = next((p for p in template_paths if p.exists()), None)
 

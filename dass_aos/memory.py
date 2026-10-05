@@ -134,7 +134,7 @@ def run_memory_refresh(project_root: Path, gotchas_limit: int = 5) -> str:
         lines.append(f"- **Siguiente Tarea**: {next_task}")
     else:
         lines.append("- No se encontraron planes activos en `.aos/plans/active/`.")
-        lines.append("- Crea uno ejecutando `python aos.py plan new feature --title <titulo>`.")
+        lines.append("- Crea uno ejecutando `aos plan new feature --title <titulo>`.")
 
     lines.extend([
         "",

@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "dass-aos"
-version = "0.4.0"
+version = "0.5.0"
 description = "Agent Operating System: stack-agnostic framework and CLI for AI-driven development"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -42,3 +42,6 @@ aos = "dass_aos.cli:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["dass_aos*"]
+
+[tool.setuptools.package-data]
+dass_aos = ["templates/**/*"]

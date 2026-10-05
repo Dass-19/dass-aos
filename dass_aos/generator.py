@@ -99,11 +99,11 @@ def generate_client(
         "Para generar clientes tipados para tu stack concreto, instala la herramienta deseada y ejecuta:\n\n"
         "```bash\n"
         "# TypeScript:\n"
-        f"python aos.py generate-client --contract \"{contract_path}\" --output \"{output_dir}\" --generator openapi-typescript\n\n"
+        f"aos generate-client --contract \"{contract_path}\" --output \"{output_dir}\" --generator openapi-typescript\n\n"
         "# Python (modelos Pydantic):\n"
-        f"python aos.py generate-client --contract \"{contract_path}\" --output \"{output_dir}\" --generator datamodel-codegen\n\n"
+        f"aos generate-client --contract \"{contract_path}\" --output \"{output_dir}\" --generator datamodel-codegen\n\n"
         "# Java / Go / C# / etc.:\n"
-        f"python aos.py generate-client --contract \"{contract_path}\" --output \"{output_dir}\" --generator openapi-generator --language go\n"
+        f"aos generate-client --contract \"{contract_path}\" --output \"{output_dir}\" --generator openapi-generator --language go\n"
         "```\n"
     )
     readme_path.write_text(content, encoding="utf-8")

@@ -21,12 +21,12 @@
 ## 4. Mandatory Scanners (with dry-run support)
 
 ### Semgrep (SAST)
-- Command: `python aos.py scan --tool semgrep`
+- Command: `aos scan --tool semgrep`
 - Supports `--dry-run` (exits 0 and prints guidance when the tool is missing).
 - Default packs: security-audit + OWASP-oriented rules.
 
 ### Checkov (IaC)
-- Command: `python aos.py scan --tool checkov`
+- Command: `aos scan --tool checkov`
 - Supports `--dry-run`.
 - Applies to any infrastructure-as-code, containers, pipelines, etc.
 
@@ -47,4 +47,4 @@
 1. Document it here.
 2. Ensure `aos scan` or `aos verify` validates it.
 3. Add a gotcha if non-obvious.
-4. Run `python aos.py sync`.
+4. Run `aos sync`.

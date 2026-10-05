@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -55,6 +56,7 @@ def detect_stack_commands(project_root: Path) -> Dict[str, Optional[str]]:
 
     # Go
     if (project_root / "go.mod").exists():
+        inferred["lint_command"] = "go vet ./..."
         inferred["test_command"] = "go test ./..."
 
     return inferred
@@ -82,6 +84,13 @@ def run_verification(
 
         if not cmd:
             print(f"[{check.upper()}] SKIPPED: No {key} configured in .aos/config.json")
+            if strict:
+                overall_code = 1
+            continue
+
+        exe = cmd.split()[0]
+        if shutil.which(exe) is None:
+            print(f"[{check.upper()}] SKIPPED: '{exe}' no está instalado (comando: {cmd})")
             if strict:
                 overall_code = 1
             continue

@@ -4,7 +4,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 
 # Managed block markers
 MANAGED_START = "<!-- DASS-AOS-MANAGED-START -->"
@@ -21,8 +21,8 @@ RULE_FILES = [".cursorrules", ".windsurfrules"]
 # Default project state directory name
 AOS_DIR_NAME = ".aos"
 
-# Engine root directory (where dass_aos package lives)
-ENGINE_ROOT = Path(__file__).resolve().parent.parent
+# Templates shipped inside the package; layout mirrors .aos/
+TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 
 # Safe console output setup (avoids cp1252 UnicodeEncodeError on Windows)
 def configure_utf8_output() -> None:

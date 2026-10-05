@@ -34,100 +34,117 @@ DASS-AOS no promueve la autonomía ciega ni busca sustituir el criterio del desa
 
 ## 3. Modelo Operativo: Distribución de Responsabilidades
 
-El framework opera bajo una separación estricta entre la gobernanza humana y la ejecución técnica del agente:
-
 | Fase del Workflow | Rol del Desarrollador (Humano) | Rol del AI Agent |
 |---|---|---|
 | **Bootstrap / Setup** | Ejecuta `aos init` una única vez por repositorio. | Sin intervención previa. |
-| **Context Definition** | Especifica notas técnicas o restricciones en `CLAUDE.md`. | Lee las directivas inyectadas en su managed block. |
+| **Context Definition** | Especifica notas técnicas en `CLAUDE.md` y agregados en `.aos/**/*.local.md`. | Lee las directivas inyectadas en su managed block. |
 | **Session-Start** | Plantea el objetivo o user request en lenguaje natural. | **Ejecuta `aos refresh`**: analiza gotchas previos, codebase-memory graph y plan activo. |
 | **Planning & Design** | Revisa y aprueba el plan propuesto. | **Ejecuta `aos plan new`**: formaliza fases atómicas y redacta contratos en `.aos/contracts/`. |
 | **Implementation** | Supervisa el diff y resuelve bloqueos de diseño. | Codifica en unidades atómicas acopladas al contrato y la memoria del grafo. |
 | **Verification** | Inspecciona los reportes de auditoría y tests. | **Ejecuta `aos verify` y `aos scan --dry-run`**: corre linters, unit tests, Semgrep y Checkov. |
 | **Task Closure** | Aprueba el commit final y realiza merge / push. | Marca la fase `[x]` en el plan, documenta nuevos gotchas y ejecuta `aos sync`. |
 
+Las especificaciones detalladas de cada fase viven en `.aos/hooks/` (`session-start.md`, `pre-task.md`, `post-task.md`).
+
 ---
 
 ## 4. Instalación y Quickstart
 
-### Instalación en el entorno
 ```bash
-git clone https://github.com/tu-usuario/dass-aos.git
-cd dass-aos
-pip install -e .
+pip install git+https://github.com/tu-usuario/dass-aos.git
+# o, para desarrollar el motor:
+git clone https://github.com/tu-usuario/dass-aos.git && pip install -e dass-aos
 ```
 
-### Inicialización en un repositorio existente
-Navegue a la raíz del proyecto a gestionar:
+Esto registra el ejecutable `aos`. Si no está en el PATH, `python -m dass_aos <comando>` es equivalente.
+
+Desde la raíz del proyecto a gestionar:
 ```bash
 aos init
 ```
-*(O directamente vía script sin instalación previa: `python /ruta/a/dass-aos/aos.py init`)*
 
 Este comando genera:
-- `.aos/`: Directorio de estado local aislado (contracts, active/archive plans, gotchas, ADRs y configuración).
-- `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.cursorrules`: Archivos de instrucciones gobernados por DASS-AOS, preservando la sección `## Notas personalizadas del proyecto`.
+- `.aos/`: estado local del proyecto (contratos, planes, gotchas, ADRs, roles, skills y configuración).
+- `.aos/config.json` con los comandos de lint/test **detectados según el stack** (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`). Edítalo si la detección no acierta.
+- `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.cursorrules`, `.windsurfrules`: instrucciones gobernadas por DASS-AOS, preservando la sección `## Notas personalizadas del proyecto`.
+- `.git/hooks/pre-commit` (si hay repo git y no existe ya un hook): ejecuta `aos verify`. Nunca bloquea si DASS-AOS o Python no están instalados.
 
 ---
 
-## 5. Arquitectura del Repositorio y Estado Local
+## 5. Adaptar DASS-AOS al Proyecto
+
+Los roles y skills del motor son genéricos a propósito. Cada proyecto los adapta sin editarlos ([ADR-003](.aos/decisions/ADR-003-base-motor-agregados-locales.md)):
+
+| Quiero… | Hago… |
+|---|---|
+| Añadir reglas propias a un rol del motor | Crear `.aos/agents/<rol>.local.md`. `aos sync` lo anexa al rol como "Agregados del proyecto". |
+| Ajustar una skill del motor | Crear `.aos/skills/specs/<skill>.local.md`. |
+| Un rol o skill exclusivo del proyecto | Crear `.aos/agents/<nuevo>.md` o `.aos/skills/specs/<nueva>.md`. El motor no lo toca. |
+| Recibir mejoras del motor | `pip install -U dass-aos && aos sync`. Los roles/skills base se regeneran; los `.local.md` se conservan. |
+| Cambiar comandos de verificación | Editar `lint_command` / `test_command` / `migration_command` en `.aos/config.json`. |
+
+- Los `.aos/agents/*.md` y `.aos/skills/specs/*.md` del motor llevan el marcador `<!-- DASS-AOS-GENERATED`: **no los edites**. Si `sync` encuentra uno editado a mano, no lo sobreescribe y te indica que muevas los cambios al `.local.md`.
+- Una skill puede declarar `applies_when: ["glob", ...]` en su frontmatter: solo se lista en las instrucciones si algún glob encuentra archivos en el proyecto (p. ej. `db-migration-check` solo aparece si hay `migrations/`, `alembic.ini`, `prisma/schema.prisma`…).
+
+---
+
+## 6. Estructura
 
 ```
-DASS-AOS (Engine & CLI)
-├── aos.py                     Punto de entrada ejecutable
-├── pyproject.toml             Configuración de paquete pip / PyPI
-├── dass_aos/                  Módulos centrales en Python 3 puro
-│   ├── bootstrap.py           Inicialización de repositorios
-│   ├── sync.py                Sincronización idempotente de instrucciones
-│   ├── memory.py              Refresco de memoria de inicio de sesión
-│   ├── scanners.py            Integración con Semgrep (SAST) y Checkov (IaC)
-│   ├── verifier.py            Ejecución agnóstica de linters y test suites
-│   ├── generator.py           Generación de clientes tipados desde OpenAPI
-│   └── plans.py               Gestión de plantillas de planes
-├── agents/                    Definiciones de roles base
-├── contracts/                 Plantillas de interfaces (HTTP, events, schemas)
-├── decisions/                 Plantillas de Architecture Decision Records (ADRs)
-├── plans/templates/           Plantillas de planes (feature, bugfix, refactor, security)
-└── hooks/                     Especificaciones de lifecycle hooks
+dass-aos/ (motor)
+├── pyproject.toml
+├── aos.py                     Atajo para ejecutar el CLI desde el código fuente
+├── dass_aos/
+│   ├── cli.py                 Entrada del CLI (`aos` / `python -m dass_aos`)
+│   ├── bootstrap.py           aos init
+│   ├── sync.py                aos sync (instrucciones + roles/skills del motor)
+│   ├── memory.py              aos refresh
+│   ├── scanners.py            aos scan (Semgrep / Checkov)
+│   ├── verifier.py            aos verify (lint / test / migración, detección de stack)
+│   ├── generator.py           aos generate-client
+│   ├── plans.py               aos plan new
+│   └── templates/             Todo lo que `aos init` copia a .aos/ (misma estructura)
+├── docs/ARCHITECTURE.md
+└── tests/
 ```
 
-En el repositorio del proyecto:
 ```
-target-project/
+mi-proyecto/
 ├── .aos/
-│   ├── config.json            Configuración de comandos de verificación
-│   ├── mcp-config.json         Configuración de servidores MCP locales
-│   ├── contracts/              Contratos OpenAPI 3.x y CloudEvents schemas
-│   ├── plans/active/           Planes de tareas activos por fases
-│   ├── plans/archive/          Historial de planes completados
-│   ├── knowledge/gotchas/      Knowledge base de fallos resueltos y trampas
-│   ├── decisions/              ADRs del proyecto
-│   └── memory/                 Base de datos SQLite para codebase-memory
-├── CLAUDE.md                   Instrucciones sincronizadas para Claude Code
-├── AGENTS.md                   Instrucciones estándar para agentes
-├── GEMINI.md                   Instrucciones para Gemini / Antigravity
-└── .cursorrules                Directivas para Cursor / Windsurf
+│   ├── config.json            Comandos de verificación
+│   ├── mcp-config.json        Servidores MCP (filesystem, codebase-memory)
+│   ├── agents/                Roles (generados + *.local.md del proyecto)
+│   ├── skills/specs/          Skills (generadas + *.local.md del proyecto)
+│   ├── skills/bin/            Utilidades standalone (smoke test, commit atómico)
+│   ├── hooks/                 Especificaciones de lifecycle + pre_commit.py
+│   ├── contracts/             OpenAPI 3.x y CloudEvents schemas
+│   ├── plans/{active,archive,templates}/
+│   ├── knowledge/gotchas/     Trampas y aprendizajes no obvios
+│   ├── decisions/             ADRs del proyecto
+│   ├── ci/                    Pipelines de seguridad listos para copiar
+│   └── memory/                Base de datos de codebase-memory
+├── CLAUDE.md, AGENTS.md, GEMINI.md, .cursorrules, .windsurfrules
 ```
 
 ---
 
-## 6. Referencia de Comandos CLI
+## 7. Referencia de Comandos CLI
 
 | Comando | Función Técnica | Ejecutado por |
 |---|---|---|
 | `aos init [--project-root <ruta>]` | Inicializa `.aos/` y sincroniza agent instruction files. | Desarrollador |
 | `aos refresh [--gotchas-limit <N>]` | Extrae gotchas recientes, codebase-memory graph status y active task. | Agente (Session-Start) |
 | `aos plan new <tipo> --title <título>` | Genera un plan activo a partir de template (`feature`, `bugfix`, `refactor`, `security`). | Agente (Pre-Task) |
-| `aos verify [--type lint\|test\|migration]` | Ejecuta linters, test suites y migrations (autodetectados o configurados). | Agente (Post-Task) |
+| `aos verify [--type lint\|test\|migration] [--strict]` | Ejecuta linters, test suites y migrations (configurados o autodetectados). Omite herramientas no instaladas salvo con `--strict`. | Agente (Post-Task) |
 | `aos scan [--tool semgrep\|checkov] [--dry-run]` | Ejecuta SAST (Semgrep) e IaC (Checkov) con modo dry-run local. | Agente (Post-Task) |
-| `aos sync [--project-root <ruta>]` | Regenera managed blocks respetando human notes. | Agente (Post-Task) |
+| `aos sync [--project-root <ruta>]` | Regenera managed blocks y roles/skills del motor respetando notas humanas y `.local.md`. | Agente (Post-Task) |
 | `aos generate-client --contract <ruta>` | Genera typed client stubs desde contratos OpenAPI. | Agente / Desarrollador |
 
 ---
 
-## 7. Roles Especializados de Agentes
+## 8. Roles Especializados de Agentes
 
-Ubicados en `agents/`, definen tools permitidas, constraints y output protocols:
+Ubicados en `.aos/agents/`, definen tools permitidas, constraints y output protocols:
 
 - **App Builder** (`app-builder.md`): Diseño end-to-end e implementación por fases guiada por contratos.
 - **Architect** (`architect.md`): Redacción de ADRs, definición de contratos y system boundaries.
@@ -138,30 +155,27 @@ Ubicados en `agents/`, definen tools permitidas, constraints y output protocols:
 
 ---
 
-## 8. Verificación y Auditoría en CI/CD
+## 9. Verificación y Auditoría en CI/CD
 
-El repositorio incluye pipelines listos para producción:
-- **GitHub Actions**: `ci/github-actions/security.yml`
-- **GitLab CI**: `ci/gitlab/security.yml`
+`aos init` copia pipelines listos para producción a `.aos/ci/`:
+- **GitHub Actions**: `.aos/ci/github-actions/security.yml` → copiar a `.github/workflows/`
+- **GitLab CI**: `.aos/ci/gitlab/security.yml`
 
-Ambos ejecutan Semgrep y Checkov en containers en modo estricto, asegurando paridad completa entre las comprobaciones que el agente ejecuta localmente y las del pipeline de CI.
+Ambos ejecutan Semgrep y Checkov en containers en modo estricto, asegurando paridad entre las comprobaciones locales del agente y las del pipeline.
 
 ---
 
-## 9. Test Suite y Desarrollo Local
+## 10. Desarrollo del Motor
 
-El proyecto cuenta con una test suite unitaria que utiliza exclusivamente la biblioteca estándar:
+Arquitectura interna y decisiones de diseño: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ```bash
-# Ejecutar test suite
 python -m unittest discover -s tests -p "test_*.py" -v
-
-# Linter de código
 ruff check .
 ```
 
 ---
 
-## 10. Licencia
+## 11. Licencia
 
 Distribuido bajo licencia MIT. Consulte el archivo `LICENSE` para más detalles.

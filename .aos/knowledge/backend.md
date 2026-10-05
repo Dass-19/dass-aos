@@ -5,7 +5,7 @@
 ## Mandatory practices
 1. Every public endpoint must have a corresponding contract under `.aos/contracts/http/`.
 2. Domain events must be defined under `.aos/contracts/events/` before being emitted.
-3. Schema/data migrations are atomic and reversible; use `python aos.py verify --type migration`.
+3. Schema/data migrations are atomic and reversible; use `aos verify --type migration`.
 4. Business logic lives behind clear interfaces (use-cases / services), never mixed with transport or persistence details.
 5. All external I/O is behind interfaces so it can be substituted in tests.
 
@@ -16,4 +16,4 @@
 ## Testing
 - Unit tests for pure domain logic.
 - Integration tests for adapters.
-- Smoke tests and contract verification via `python aos.py verify` after any public surface change.
+- Smoke tests and contract verification via `aos verify` after any public surface change.

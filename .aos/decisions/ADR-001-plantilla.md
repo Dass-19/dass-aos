@@ -7,7 +7,7 @@ created: 2026-10-03
 
 # ADR-001: Plantilla de Architecture Decision Record
 
-> Decision: Todo cambio de alcance arquitectónico, nueva tecnología o excepción a políticas de seguridad debe registrarse como ADR inmutable bajo `.aos/decisions/` (o `decisions/` en el motor).
+> Decision: Todo cambio de alcance arquitectónico, nueva tecnología o excepción a políticas de seguridad debe registrarse como ADR inmutable bajo `.aos/decisions/`.
 
 ## Contexto
 Los agentes y los humanos necesitan una fuente auditable de las decisiones que dan forma al sistema.

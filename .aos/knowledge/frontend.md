@@ -9,7 +9,7 @@
 
 ## Contracts
 - Consume only the HTTP contracts defined under `.aos/contracts/http/`.
-- Prefer generated clients (see `python aos.py generate-client`) over hand-written API calls.
+- Prefer generated clients (see `aos generate-client`) over hand-written API calls.
 
 ## Security on the client
 - Sanitize any user-generated content before rendering.
