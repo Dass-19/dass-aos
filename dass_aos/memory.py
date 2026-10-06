@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from .constants import AOS_DIR_NAME, configure_utf8_output
+from .sync import native_status
 
 
 def list_recent_gotchas(project_root: Path, limit: int = 5) -> List[Tuple[str, Path, dt.date]]:
@@ -135,6 +136,16 @@ def run_memory_refresh(project_root: Path, gotchas_limit: int = 5) -> str:
     else:
         lines.append("- No se encontraron planes activos en `.aos/plans/active/`.")
         lines.append("- Crea uno ejecutando `aos plan new feature --title <titulo>`.")
+
+    lines.extend([
+        "",
+        "## 4. Adaptación Nativa (adapt-native)",
+    ])
+    status = native_status(project_root)
+    if status:
+        lines.extend(f"- `{tool}`: {state}" for tool, state in status.items())
+    else:
+        lines.append("- Ninguna herramienta adaptada aún: ejecuta la skill `adapt-native` en tu herramienta.")
 
     lines.extend([
         "",

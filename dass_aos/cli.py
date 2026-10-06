@@ -11,7 +11,7 @@ from .generator import generate_client
 from .memory import run_memory_refresh
 from .plans import create_new_plan
 from .scanners import run_security_scans
-from .sync import sync_all_instructions
+from .sync import native_source_hash, sync_all_instructions
 from .verifier import run_verification
 
 
@@ -39,6 +39,9 @@ def build_parser() -> argparse.ArgumentParser:
     sync_p = subparsers.add_parser("sync", help="Synchronize CLAUDE.md, AGENTS.md, GEMINI.md, and editor rules")
     sync_p.add_argument("--project-root", default=".", help="Root path of target project (default: current directory)")
     sync_p.add_argument("--create-missing", action="store_true", default=True, help="Create files if they don't exist")
+
+    native_p = subparsers.add_parser("native-hash", help="Print the source hash that adapt-native records in .aos/native/<tool>.json")
+    native_p.add_argument("--project-root", default=".", help="Root path of target project (default: current directory)")
 
     # 3. refresh
     refresh_p = subparsers.add_parser("refresh", help="Session-start hook: refresh gotchas and memory status")
@@ -109,6 +112,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"\n[aos sync] Agent instruction sync complete for: {root}")
             for fname, action in res.items():
                 print(f"  - {fname}: {action}")
+            return 0
+
+        elif args.command == "native-hash":
+            print(native_source_hash(Path(args.project_root).resolve()))
             return 0
 
         elif args.command == "refresh":

@@ -49,3 +49,6 @@ Thumbs.db
 test_sandbox/
 test-client/
 *.db-journal
+
+# DASS-AOS: manifiestos de adapt-native (por desarrollador)
+.aos/native/

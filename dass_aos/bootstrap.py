@@ -78,7 +78,14 @@ def init_project(
     # 5. Sync agent instruction files in project root
     sync_results = sync_all_instructions(project_root, create_missing=True)
 
-    # 6. Install git pre-commit hook if a repo exists and no hook is present
+    # 6. Native manifests are per developer (ADR-004): keep them out of git
+    gitignore = project_root / ".gitignore"
+    if (project_root / ".git").exists() or gitignore.exists():
+        current = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+        if ".aos/native/" not in current.splitlines():
+            gitignore.write_text((current.rstrip("\n") + "\n" if current else "") + ".aos/native/\n", encoding="utf-8")
+
+    # 7. Install git pre-commit hook if a repo exists and no hook is present
     git_pre_commit = project_root / ".git" / "hooks" / "pre-commit"
     if git_pre_commit.parent.exists() and not git_pre_commit.exists():
         try:

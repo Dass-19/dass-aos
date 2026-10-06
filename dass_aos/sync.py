@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -21,6 +22,8 @@ from .constants import (
 
 GENERATED_MARKER = "<!-- DASS-AOS-GENERATED"
 ENGINE_DOC_DIRS = ["agents", "skills/specs"]
+# Sources that adapt-native translates; a change here means native artifacts are stale (ADR-004)
+NATIVE_SOURCES = ["agents", "skills", "hooks", "mcp-config.json"]
 
 
 def _norm(text: str) -> str:
@@ -104,6 +107,34 @@ def get_available_skills(project_root: Optional[Path] = None) -> List[str]:
     # Comandos core del CLI
     skills |= {"init", "refresh", "verify", "scan", "plan", "sync"}
     return sorted(skills)
+
+
+def native_source_hash(project_root: Path) -> str:
+    """Hash of everything adapt-native reads, plus which skills currently apply."""
+    aos_dir = project_root / AOS_DIR_NAME
+    h = hashlib.sha256()
+    for name in NATIVE_SOURCES:
+        src = aos_dir / name
+        files = [src] if src.is_file() else sorted(src.rglob("*")) if src.is_dir() else []
+        for p in files:
+            if p.is_file() and "__pycache__" not in p.parts:
+                h.update(p.relative_to(aos_dir).as_posix().encode("utf-8"))
+                h.update(p.read_bytes().replace(b"\r\n", b"\n"))
+    h.update("\n".join(get_available_skills(project_root)).encode("utf-8"))
+    return h.hexdigest()[:16]
+
+
+def native_status(project_root: Path) -> Dict[str, str]:
+    """Tool -> status for each .aos/native/<tool>.json manifest written by adapt-native."""
+    current = native_source_hash(project_root)
+    status = {}
+    for manifest in sorted((project_root / AOS_DIR_NAME / "native").glob("*.json")):
+        try:
+            ok = json.loads(manifest.read_text(encoding="utf-8")).get("source_hash") == current
+        except (ValueError, OSError):
+            ok = False
+        status[manifest.stem] = "al día" if ok else "DESACTUALIZADO: ejecuta la skill adapt-native"
+    return status
 
 
 def build_managed_block(target_file: str, project_root: Path) -> str:
@@ -230,4 +261,6 @@ def sync_all_instructions(project_root: Path, create_missing: bool = False) -> D
         else:
             results[filename] = "OMITIDO"
 
+    for tool, state in native_status(project_root).items():
+        results[f"{AOS_DIR_NAME}/native/{tool}.json"] = state
     return results

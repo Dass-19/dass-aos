@@ -48,7 +48,7 @@ updated: 2026-10-06
   6. Añadir las rutas generadas al bloque marcado de `.gitignore`.
   7. Mostrar el diff y pedir aprobación humana antes de escribir hooks, permisos o MCP.
   8. Escribir el manifiesto (Fase 10).
-- [ ] Fase 10: Manifiesto y desincronización (código determinista). `.aos/native/<herramienta>.json` (local, ignorado en git) con: herramienta, fecha, fuentes consultadas, archivos generados, `enforcement` (`native` | `convention`) y `source_hash` (hash de `agents/`, `skills/specs/`, `hooks/` y `mcp-config.json` renderizados). `aos init` añade `.aos/native/` a `.gitignore`. `aos sync` y `aos refresh` recalculan el hash y, si difiere, avisan: "fuentes cambiadas → ejecutar adapt-native en <herramienta>". Test con tmpdir: manifiesto al día → sin aviso; modificar un rol → aviso.
+- [x] Fase 10: Manifiesto y desincronización (código determinista). `.aos/native/<herramienta>.json` (local, ignorado en git) con: herramienta, fecha, fuentes consultadas, archivos generados, `enforcement` (`native` | `convention`) y `source_hash` (hash de `agents/`, `skills/specs/`, `hooks/` y `mcp-config.json` renderizados). `aos init` añade `.aos/native/` a `.gitignore`. `aos sync` y `aos refresh` recalculan el hash y, si difiere, avisan: "fuentes cambiadas → ejecutar adapt-native en <herramienta>". Test con tmpdir: manifiesto al día → sin aviso; modificar un rol → aviso.
 - [ ] Fase 11: Bloque gestionado. Añadir a CLAUDE.md/AGENTS.md/GEMINI.md/etc.: "si no existe `.aos/native/<tu-herramienta>.json` o `aos refresh` avisa de desincronización, ejecuta la skill `adapt-native`". Ajustar el paso 1 del ciclo de vida: donde haya hook nativo, `aos refresh` ya es automático. Test: el bloque generado contiene la instrucción.
 
 ### Bloque E — Cierre
