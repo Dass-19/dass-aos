@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 import datetime as dt
-import shutil
 from pathlib import Path
 from typing import List, Optional, Tuple
 
 from .constants import AOS_DIR_NAME, configure_utf8_output
-from .scanners import checkov_applies
+from .scanners import check_tool_installed, checkov_applies
 from .sync import native_status
 
 
@@ -100,7 +99,7 @@ def missing_dependencies(project_root: Path) -> List[Tuple[str, str]]:
     ]
     if checkov_applies(project_root):
         deps.append(("checkov", "pip install dass-aos[scan] (o pip install checkov)"))
-    return [(name, hint) for name, hint in deps if not shutil.which(name)]
+    return [(name, hint) for name, hint in deps if not check_tool_installed(name)]
 
 
 def run_memory_refresh(project_root: Path, gotchas_limit: int = 5) -> str:

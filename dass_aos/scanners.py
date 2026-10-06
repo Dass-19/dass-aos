@@ -1,6 +1,7 @@
 """Security scanning module for Semgrep (SAST) and Checkov (IaC)."""
 from __future__ import annotations
 
+import importlib.util
 import shutil
 import subprocess
 import sys
@@ -12,8 +13,8 @@ from .sync import skill_applies
 
 
 def check_tool_installed(tool_name: str) -> Optional[str]:
-    """Check if tool is in PATH."""
-    return shutil.which(tool_name)
+    """Check PATH, then next to this Python (dass-aos[scan] in a non-activated venv)."""
+    return shutil.which(tool_name) or shutil.which(tool_name, path=str(Path(sys.executable).parent))
 
 
 def run_semgrep(
@@ -77,8 +78,10 @@ def run_checkov(
         print(f"[checkov-scan] DRY-RUN: checkov -d \"{target_path}\" --quiet --compact")
         return 0
 
+    # Windows checkov.cmd runs the PATH python, not the venv's: use the module when we have it
+    launcher = [sys.executable, "-m", "checkov.main"] if importlib.util.find_spec("checkov") else [executable]
     cmd = [
-        executable,
+        *launcher,
         "-d", str(target_path),
         "--quiet",
         "--compact",

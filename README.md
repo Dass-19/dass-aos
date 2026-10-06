@@ -58,6 +58,19 @@ git clone https://github.com/tu-usuario/dass-aos.git && pip install -e dass-aos
 
 Esto registra el ejecutable `aos`. Si no está en el PATH, `python -m dass_aos <comando>` es equivalente.
 
+### Dependencias externas
+
+El núcleo no tiene dependencias. Las herramientas externas son opcionales; `aos refresh` avisa de las que faltan **solo si aplican al proyecto**.
+
+| Herramienta | Para qué | Cuándo aplica | Instalación |
+|---|---|---|---|
+| Semgrep | SAST (`aos scan`) | Siempre | `pip install "dass-aos[scan]"` o `pip install semgrep`. En Windows nativo está en beta: usa `PYTHONUTF8=1`; si falla, WSL o Docker. |
+| Checkov | IaC, contenedores y pipelines (`aos scan`) | Solo si hay IaC (Terraform, Bicep, Dockerfile, Helm, Kustomize, Serverless, CDK, CI pipelines… ver `applies_when` en `checkov-scan.md`) | `pip install "dass-aos[scan]"` o `pip install checkov` |
+| codebase-memory | Grafo estructural del código (MCP) | Siempre | Binario `codebase-memory-mcp` en el PATH (ver su repositorio) |
+| context7 | Documentación actualizada de librerías (MCP); obligatorio para `adapt-native` | Siempre | Servidor remoto `https://mcp.context7.com/mcp`, sin instalación. API key opcional (más rate limit) en context7.com |
+
+Los servidores MCP se declaran una sola vez, de forma neutral, en `.aos/mcp-config.json`; `adapt-native` los traduce al formato de tu herramienta.
+
 Desde la raíz del proyecto a gestionar:
 ```bash
 aos init
@@ -86,6 +99,20 @@ Los roles y skills del motor son genéricos a propósito. Cada proyecto los adap
 - Los `.aos/agents/*.md` y `.aos/skills/specs/*.md` del motor llevan el marcador `<!-- DASS-AOS-GENERATED`: **no los edites**. Si `sync` encuentra uno editado a mano, no lo sobreescribe y te indica que muevas los cambios al `.local.md`.
 - Una skill puede declarar `applies_when: ["glob", ...]` en su frontmatter: solo se lista en las instrucciones si algún glob encuentra archivos en el proyecto (p. ej. `db-migration-check` solo aparece si hay `migrations/`, `alembic.ini`, `prisma/schema.prisma`…).
 
+## 5.1 Integración nativa con tu herramienta (`adapt-native`)
+
+DASS-AOS no genera formatos de cada proveedor ([ADR-004](.aos/decisions/ADR-004-adaptacion-nativa-delegada.md)). El bloque gestionado le ordena al agente de tu herramienta (Claude Code, Antigravity, Codex, Cursor, OpenCode…) ejecutar la skill `adapt-native`, que:
+
+1. Consulta el formato vigente de **su** herramienta con context7 y, si hay dudas, en la documentación oficial web.
+2. Genera desde `.aos/` sus subagentes (un rol = un subagente), skills, servidores MCP y el hook de inicio de sesión que ejecuta `aos refresh`.
+3. Traduce `tools_allowed` del vocabulario neutral (`read`, `search`, `edit`, `write`, `shell`, `shell:<prefijo>`, `web`, `mcp:<servidor>`) a las herramientas nativas. `aos sync` falla si un rol usa un valor fuera del vocabulario.
+4. Pide tu aprobación del diff antes de escribir hooks, permisos o MCP.
+5. Registra lo hecho en `.aos/native/<herramienta>.json`.
+
+**Qué se hace cumplir:** depende de la herramienta y queda registrado en el manifiesto (`enforcement`). Donde la herramienta puede restringir herramientas por agente o tiene evento de inicio de sesión, es `native`; donde no (p. ej. Antigravity no tiene evento de inicio de sesión), la regla queda como texto en las instrucciones y es solo una `convention`.
+
+**Por desarrollador:** lo generado y `.aos/native/` no se commitean (`aos init` ignora `.aos/native/`; `adapt-native` añade sus archivos a un bloque marcado de `.gitignore`). Cada dev ejecuta `adapt-native` en su herramienta. Si cambias roles, skills, hooks o MCP en `.aos/`, `aos refresh` y `aos sync` avisan con **DESACTUALIZADO** y basta con volver a ejecutarla.
+
 ---
 
 ## 6. Estructura
@@ -112,7 +139,8 @@ dass-aos/ (motor)
 mi-proyecto/
 ├── .aos/
 │   ├── config.json            Comandos de verificación
-│   ├── mcp-config.json        Servidores MCP (codebase-memory)
+│   ├── mcp-config.json        Servidores MCP neutrales (codebase-memory, context7)
+│   ├── native/                Manifiestos de adapt-native (por dev, fuera de git)
 │   ├── agents/                Roles (generados + *.local.md del proyecto)
 │   ├── skills/specs/          Skills (generadas + *.local.md del proyecto)
 │   ├── skills/bin/            Utilidades standalone (smoke test, commit atómico)
@@ -136,7 +164,8 @@ mi-proyecto/
 | `aos refresh [--gotchas-limit <N>]` | Extrae gotchas recientes, codebase-memory graph status y active task. | Agente (Session-Start) |
 | `aos plan new <tipo> --title <título>` | Genera un plan activo a partir de template (`feature`, `bugfix`, `refactor`, `security`). | Agente (Pre-Task) |
 | `aos verify [--type lint\|test\|migration] [--strict]` | Ejecuta linters, test suites y migrations (configurados o autodetectados). Omite herramientas no instaladas salvo con `--strict`. | Agente (Post-Task) |
-| `aos scan [--tool semgrep\|checkov] [--dry-run]` | Ejecuta SAST (Semgrep) e IaC (Checkov) con modo dry-run local. | Agente (Post-Task) |
+| `aos scan [--tool semgrep\|checkov] [--dry-run]` | Ejecuta SAST (Semgrep) e IaC (Checkov, solo si hay IaC o con `--tool checkov`) con modo dry-run local. | Agente (Post-Task) |
+| `aos native-hash` | Imprime el hash de las fuentes que `adapt-native` registra en su manifiesto. | Agente (`adapt-native`) |
 | `aos sync [--project-root <ruta>]` | Regenera managed blocks y roles/skills del motor respetando notas humanas y `.local.md`. | Agente (Post-Task) |
 | `aos generate-client --contract <ruta>` | Genera typed client stubs desde contratos OpenAPI. | Agente / Desarrollador |
 

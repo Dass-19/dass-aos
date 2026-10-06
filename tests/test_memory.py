@@ -40,12 +40,12 @@ class TestMemory(unittest.TestCase):
         self.assertIn("async-outbox-trap.md", output)
 
     def test_missing_dependencies_only_when_they_apply(self):
-        with mock.patch("dass_aos.memory.shutil.which", return_value=None):
+        with mock.patch("dass_aos.memory.check_tool_installed", return_value=None):
             names = [name for name, _ in missing_dependencies(self.temp_dir)]
             self.assertEqual(names, ["semgrep", "codebase-memory-mcp"])  # no IaC -> no checkov
             (self.temp_dir / "main.tf").write_text("", encoding="utf-8")
             self.assertIn("checkov", [name for name, _ in missing_dependencies(self.temp_dir)])
-        with mock.patch("dass_aos.memory.shutil.which", return_value="/bin/x"):
+        with mock.patch("dass_aos.memory.check_tool_installed", return_value="/bin/x"):
             self.assertEqual(missing_dependencies(self.temp_dir), [])
 
 
