@@ -46,21 +46,23 @@ Lee siempre la versión renderizada (base + `<nombre>.local.md`).
 
 ### Traducción de `tools_allowed` (vocabulario neutral, ADR-004)
 `read`, `search`, `edit`, `write`, `shell`, `shell:<prefijo>`, `web`, `mcp:<servidor>`.
-- Mapea cada valor a las herramientas nativas equivalentes. `shell:<prefijo>` → la forma nativa de restringir comandos si existe; si no, `shell` + la restricción como texto en el cuerpo del subagente.
+- Mapea cada valor a los **nombres nativos exactos** que documenta la herramienta. Nunca copies el vocabulario neutral tal cual (`mcp:context7`, `search`) en un campo nativo; si un valor no tiene equivalente documentado, déjalo como texto y regístralo como `convention`. Para MCP usa el mecanismo nativo (nombre de herramienta MCP, campo de servidores MCP del agente, etc.). `shell:<prefijo>` → la forma nativa de restringir comandos si existe; si no, `shell` + la restricción como texto en el cuerpo del subagente.
 - Cuidado: en algunas herramientas una lista de permitidas **excluye los MCP no listados**. Inclúyelos explícitamente o, si la herramienta tiene lista de bloqueo (p. ej. `disallowedTools`), bloquea solo el complemento cuando sea equivalente.
 - Si la herramienta no puede restringir herramientas por agente, escribe la restricción como texto en el subagente/regla y registra `enforcement: "convention"`.
 
 ## 4. Reglas de escritura
-- Todo archivo generado lleva el marcador `DASS-AOS-GENERATED` (comentario después del frontmatter si el formato exige frontmatter al inicio). En JSON/TOML, sin comentarios: identifica lo tuyo por nombre de servidor/hook y regístralo en el manifiesto.
+- Todo archivo generado lleva **un solo** marcador `DASS-AOS-GENERATED` (comentario después del frontmatter si el formato exige frontmatter al inicio); quita el marcador que trae el `.md` de `.aos/` al copiar su cuerpo. En JSON/TOML, sin comentarios: identifica lo tuyo por nombre de servidor/hook y regístralo en el manifiesto.
 - **Nunca modifiques un archivo sin marcador** ni configuración del usuario: fusiona (merge) JSON/TOML conservando todo lo ajeno.
 - Prefiere los archivos personales/no versionados de la herramienta cuando existan (p. ej. `settings.local.json`).
 - Borra solo archivos generados (con marcador o listados en el manifiesto anterior) que ya no correspondan.
-- Añade cada ruta generada a `.gitignore` dentro de este bloque (créalo si no existe; reemplaza su contenido entero en cada ejecución). Nunca ignores carpetas completas como `.claude/` o `.agents/`:
+- Añade a `.gitignore` cada ruta generada **y cada archivo personal en el que fusionaste algo** (p. ej. `.claude/settings.local.json`) dentro del bloque **de tu herramienta** (`<tool>` en el marcador). Créalo si no existe y reemplaza solo su contenido en cada ejecución. **No toques los bloques de otras herramientas.** Nunca ignores carpetas completas como `.claude/` o `.agents/`:
   ```gitignore
-  # >>> DASS-AOS adapt-native (generado, no editar) >>>
+  # >>> DASS-AOS adapt-native: claude-code (generado, no editar) >>>
   .claude/agents/reviewer.md
-  # <<< DASS-AOS adapt-native <<<
+  .claude/settings.local.json
+  # <<< DASS-AOS adapt-native: claude-code <<<
   ```
+- Después de escribir, comprueba con `git status` que nada de lo tuyo aparece como no versionado.
 
 ## 5. Aprobación humana
 Antes de escribir **hooks, permisos o servidores MCP**, muestra el diff completo y espera aprobación explícita. Subagentes y skills se pueden escribir directamente.
