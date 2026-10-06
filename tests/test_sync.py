@@ -113,6 +113,12 @@ class TestEngineDocs(unittest.TestCase):
         self.assertIn("'mcp:nope'", msg)
         self.assertNotIn("shell:npm'", msg)
 
+    def test_managed_block_orders_adapt_native(self):
+        init_project(self.temp_dir)
+        text = (self.temp_dir / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn(".aos/native/<tu-herramienta>.json", text)
+        self.assertIn("`adapt-native`", text)
+
     def test_engine_docs_have_name_and_description(self):
         # Tools use `description` to decide when to delegate (adapt-native)
         for sub, key in (("agents", "role:"), ("skills/specs", "name:")):

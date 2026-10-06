@@ -7,16 +7,19 @@
 > Todas las reglas, planes activos, contratos, decisiones y trampas (gotchas) se almacenan localmente en `.aos/`.
 
 ## Ciclo de Vida Obligatorio del Agente
-1. **Inicio de Sesión (Session-Start)**: Ejecutar `aos refresh` (o `python -m dass_aos refresh`) para revisar gotchas recientes y el estado de memoria.
+1. **Inicio de Sesión (Session-Start)**: Ejecutar `aos refresh` (o `python -m dass_aos refresh`) para revisar gotchas recientes y el estado de memoria. Si tu herramienta tiene el hook nativo generado por `adapt-native`, ya se ejecuta solo.
 2. **Pre-Tarea (Pre-Task)**: Consultar `.aos/plans/active/` para tomar la siguiente tarea atómica sin marcar. Revisar `.aos/contracts/` y consultar `codebase-memory` antes de modificar código.
 3. **En Tarea (In-Task)**: Trabajar en fases atómicas. Nunca inventar endpoints ni esquemas de eventos que no estén formalmente declarados en `.aos/contracts/`.
 4. **Post-Tarea (Post-Task)**: Ejecutar `aos verify` (linters/tests) y `aos scan` (Semgrep/Checkov). Marcar la tarea completada en el plan con `[x]`.
+
+## Adaptación Nativa (ADR-004)
+Si no existe `.aos/native/<tu-herramienta>.json` o `aos refresh` lo marca DESACTUALIZADO, ejecuta la skill `adapt-native` (`.aos/skills/specs/adapt-native.md`): genera tus subagentes, skills, hooks y MCP nativos desde `.aos/`.
 
 ## Roles Especializados Disponibles
 `app-builder`, `architect`, `qa-tester`, `refactorer`, `reviewer`, `security-auditor`
 
 ## Skills y Comandos Principales Disponibles
-`api-smoke-test`, `bootstrap-project`, `checkov-scan`, `generate-client`, `git-atomic-commit`, `init`, `memory-refresh`, `plan`, `refresh`, `scan`, `semgrep-scan`, `sync`, `sync-agent-instructions`, `verify`
+`adapt-native`, `api-smoke-test`, `bootstrap-project`, `generate-client`, `git-atomic-commit`, `init`, `memory-refresh`, `plan`, `refresh`, `scan`, `semgrep-scan`, `sync`, `sync-agent-instructions`, `verify`
 
 ## Contratos y Codebase Memory
 - **Contratos**: Consulta `.aos/contracts/http/`, `.aos/contracts/events/` y `.aos/contracts/schemas/`.

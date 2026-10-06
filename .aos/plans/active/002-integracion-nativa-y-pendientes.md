@@ -39,7 +39,7 @@ updated: 2026-10-06
 - [x] Fase 8: Diagnóstico en `aos refresh`: listar dependencias externas que faltan **solo si aplican** (semgrep siempre, checkov solo con IaC, `codebase-memory-mcp` en PATH, `npx`/node si context7 lo requiere), con la pista de instalación. Nunca falla, solo avisa. Test: PATH sin herramientas → avisos esperados; proyecto sin IaC → sin aviso de checkov.
 
 ### Bloque D — Adaptación delegada
-- [ ] Fase 9: Skill spec `adapt-native.md` (instrucciones para el agente, sin código por proveedor):
+- [x] Fase 9: Skill spec `adapt-native.md` (instrucciones para el agente, sin código por proveedor):
   1. Identificar la herramienta en la que corre y su versión si es posible.
   2. Consultar el formato nativo actual **primero con context7**; si context7 no lo cubre o hay cualquier duda, **buscar en la web** la documentación oficial. Nunca escribir formatos de memoria. Citar las fuentes en el manifiesto.
   3. Generar desde `.aos/` renderizado (base + `.local.md`): subagentes por rol, skills que aplican (`applies_when`), servidores MCP de `.aos/mcp-config.json`, hook de inicio de sesión que ejecute `aos refresh` (fallback `python -m dass_aos refresh`, nunca bloqueante, sin depender del PATH) y traducción de `tools_allowed` según el vocabulario de la Fase 3.
@@ -49,7 +49,7 @@ updated: 2026-10-06
   7. Mostrar el diff y pedir aprobación humana antes de escribir hooks, permisos o MCP.
   8. Escribir el manifiesto (Fase 10).
 - [x] Fase 10: Manifiesto y desincronización (código determinista). `.aos/native/<herramienta>.json` (local, ignorado en git) con: herramienta, fecha, fuentes consultadas, archivos generados, `enforcement` (`native` | `convention`) y `source_hash` (hash de `agents/`, `skills/specs/`, `hooks/` y `mcp-config.json` renderizados). `aos init` añade `.aos/native/` a `.gitignore`. `aos sync` y `aos refresh` recalculan el hash y, si difiere, avisan: "fuentes cambiadas → ejecutar adapt-native en <herramienta>". Test con tmpdir: manifiesto al día → sin aviso; modificar un rol → aviso.
-- [ ] Fase 11: Bloque gestionado. Añadir a CLAUDE.md/AGENTS.md/GEMINI.md/etc.: "si no existe `.aos/native/<tu-herramienta>.json` o `aos refresh` avisa de desincronización, ejecuta la skill `adapt-native`". Ajustar el paso 1 del ciclo de vida: donde haya hook nativo, `aos refresh` ya es automático. Test: el bloque generado contiene la instrucción.
+- [x] Fase 11: Bloque gestionado. Añadir a CLAUDE.md/AGENTS.md/GEMINI.md/etc.: "si no existe `.aos/native/<tu-herramienta>.json` o `aos refresh` avisa de desincronización, ejecuta la skill `adapt-native`". Ajustar el paso 1 del ciclo de vida: donde haya hook nativo, `aos refresh` ya es automático. Test: el bloque generado contiene la instrucción.
 
 ### Bloque E — Cierre
 - [ ] Fase 12: Verificación: `aos verify`, `aos scan --dry-run`, instalación limpia (`pip install .` y `pip install .[scan]` en venv) → `aos init`. Prueba real de `adapt-native` en **Claude Code** y **Antigravity**: se generan los nativos (incluidos MCP codebase-memory y context7), el hook ejecuta `aos refresh` al iniciar sesión, los subagentes aparecen con herramientas limitadas donde se soporta, `git status` no muestra lo generado, el manifiesto es correcto y una segunda ejecución es idempotente. Anotar lo aprendido como gotchas.

@@ -71,7 +71,7 @@ class TestBootstrap(unittest.TestCase):
             "app-builder", "architect", "qa-tester", "refactorer", "reviewer", "security-auditor",
         })
         self.assertEqual(names("skills/specs"), {
-            "api-smoke-test", "bootstrap-project", "checkov-scan", "db-migration-check",
+            "adapt-native", "api-smoke-test", "bootstrap-project", "checkov-scan", "db-migration-check",
             "generate-client", "git-atomic-commit", "memory-refresh", "semgrep-scan",
             "sync-agent-instructions",
         })
