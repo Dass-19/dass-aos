@@ -3,9 +3,10 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from dass_aos.constants import AOS_DIR_NAME
-from dass_aos.memory import list_recent_gotchas, run_memory_refresh
+from dass_aos.memory import list_recent_gotchas, missing_dependencies, run_memory_refresh
 
 
 class TestMemory(unittest.TestCase):
@@ -37,6 +38,15 @@ class TestMemory(unittest.TestCase):
         output = run_memory_refresh(self.temp_dir)
         self.assertIn("Trampa del Outbox sin drenar", output)
         self.assertIn("async-outbox-trap.md", output)
+
+    def test_missing_dependencies_only_when_they_apply(self):
+        with mock.patch("dass_aos.memory.shutil.which", return_value=None):
+            names = [name for name, _ in missing_dependencies(self.temp_dir)]
+            self.assertEqual(names, ["semgrep", "codebase-memory-mcp"])  # no IaC -> no checkov
+            (self.temp_dir / "main.tf").write_text("", encoding="utf-8")
+            self.assertIn("checkov", [name for name, _ in missing_dependencies(self.temp_dir)])
+        with mock.patch("dass_aos.memory.shutil.which", return_value="/bin/x"):
+            self.assertEqual(missing_dependencies(self.temp_dir), [])
 
 
 if __name__ == "__main__":

@@ -36,6 +36,9 @@ classifiers = [
     "Operating System :: OS Independent"
 ]
 
+[project.optional-dependencies]
+scan = ["semgrep", "checkov"]
+
 [project.scripts]
 aos = "dass_aos.cli:main"
 

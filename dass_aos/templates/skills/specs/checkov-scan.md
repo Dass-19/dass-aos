@@ -5,6 +5,7 @@ status: evergreen
 name: "checkov-scan"
 description: "Escanea IaC, contenedores y pipelines con Checkov; soporta --dry-run."
 runtime: python
+applies_when: ["*.tf", "*/*.tf", "*/*/*.tf", "*.bicep", "*/*.bicep", "Dockerfile", "*/Dockerfile", "*.Dockerfile", "Chart.yaml", "*/Chart.yaml", "*/*/Chart.yaml", "kustomization.yaml", "*/kustomization.yaml", "*/*/kustomization.yaml", "serverless.yml", "serverless.yaml", "cdk.json", "template.yaml", "k8s", "*/k8s", "manifests", "helm", "infra", "cloudformation", ".github/workflows/*.yml", ".github/workflows/*.yaml", ".gitlab-ci.yml", "azure-pipelines.yml", "bitbucket-pipelines.yml", ".circleci/config.yml", "ansible.cfg", "playbook*.yml"]
 entrypoint: "aos scan --tool checkov"
 inputs:
   - name: project_root

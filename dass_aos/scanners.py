@@ -7,7 +7,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from .constants import configure_utf8_output
+from .constants import AOS_DIR_NAME, TEMPLATES_DIR, configure_utf8_output
+from .sync import skill_applies
 
 
 def check_tool_installed(tool_name: str) -> Optional[str]:
@@ -91,6 +92,12 @@ def run_checkov(
         return 1
 
 
+def checkov_applies(project_root: Path) -> bool:
+    """Checkov only makes sense with IaC: reuse the skill spec's applies_when (project copy wins)."""
+    spec = project_root / AOS_DIR_NAME / "skills" / "specs" / "checkov-scan.md"
+    return skill_applies(spec if spec.exists() else TEMPLATES_DIR / "skills" / "specs" / "checkov-scan.md", project_root)
+
+
 def run_security_scans(
     target_path: Path,
     tool: str = "all",
@@ -109,7 +116,9 @@ def run_security_scans(
         if code != 0:
             overall_code = code
 
-    if tool in ("all", "checkov"):
+    if tool == "all" and not checkov_applies(target_path):
+        print("[checkov-scan] SKIPPED: no IaC detected (applies_when en checkov-scan.md); usa --tool checkov para forzarlo.")
+    elif tool in ("all", "checkov"):
         code = run_checkov(target_path, dry_run=dry_run, strict=strict)
         if code != 0 and overall_code == 0:
             overall_code = code

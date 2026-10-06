@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import datetime as dt
+import shutil
 from pathlib import Path
 from typing import List, Optional, Tuple
 
 from .constants import AOS_DIR_NAME, configure_utf8_output
+from .scanners import checkov_applies
 from .sync import native_status
 
 
@@ -90,6 +92,17 @@ def get_active_plan_info(project_root: Path) -> Optional[Tuple[str, str]]:
     return (f"{plan_title} ({first_plan.name})", next_task)
 
 
+def missing_dependencies(project_root: Path) -> List[Tuple[str, str]]:
+    """External tools that apply to this project but are not on PATH (warn only, never fail)."""
+    deps = [
+        ("semgrep", "pip install dass-aos[scan] (o pip install semgrep)"),
+        ("codebase-memory-mcp", "ver README, sección Dependencias externas"),
+    ]
+    if checkov_applies(project_root):
+        deps.append(("checkov", "pip install dass-aos[scan] (o pip install checkov)"))
+    return [(name, hint) for name, hint in deps if not shutil.which(name)]
+
+
 def run_memory_refresh(project_root: Path, gotchas_limit: int = 5) -> str:
     """Ejecuta el refresco de inicio de sesión y devuelve el resumen en Markdown."""
     configure_utf8_output()
@@ -146,6 +159,13 @@ def run_memory_refresh(project_root: Path, gotchas_limit: int = 5) -> str:
         lines.extend(f"- `{tool}`: {state}" for tool, state in status.items())
     else:
         lines.append("- Ninguna herramienta adaptada aún: ejecuta la skill `adapt-native` en tu herramienta.")
+
+    lines.extend(["", "## 5. Dependencias Externas"])
+    missing = missing_dependencies(project_root)
+    if missing:
+        lines.extend(f"- Falta `{name}`: {hint}" for name, hint in missing)
+    else:
+        lines.append("- Todas las dependencias que aplican están instaladas.")
 
     lines.extend([
         "",
