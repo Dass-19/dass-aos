@@ -3,6 +3,7 @@ id: 202610031414
 type: skill-spec
 status: evergreen
 name: "sync-agent-instructions"
+description: "Regenera de forma idempotente los bloques gestionados de CLAUDE.md, AGENTS.md, GEMINI.md, etc., preservando las notas humanas."
 runtime: python
 entrypoint: "aos sync"
 inputs:

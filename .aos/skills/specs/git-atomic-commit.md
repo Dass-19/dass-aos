@@ -3,6 +3,7 @@ id: 202610031416
 type: skill-spec
 status: evergreen
 name: "git-atomic-commit"
+description: "Crea commits atómicos con Conventional Commits y lista explícita de archivos; nunca git add -A."
 runtime: python
 entrypoint: ".aos/skills/bin/git_atomic_commit.py"
 inputs:

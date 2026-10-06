@@ -3,6 +3,7 @@ id: 202610031413
 type: skill-spec
 status: evergreen
 name: "memory-refresh"
+description: "Refresco de inicio de sesión (aos refresh): gotchas recientes, estado de codebase-memory y siguiente tarea del plan activo."
 runtime: python
 entrypoint: "aos refresh"
 inputs:

@@ -102,6 +102,14 @@ class TestEngineDocs(unittest.TestCase):
         sync_all_instructions(self.temp_dir)
         self.assertIn("db-migration-check", claude.read_text(encoding="utf-8"))
 
+    def test_engine_docs_have_name_and_description(self):
+        # Tools use `description` to decide when to delegate (adapt-native)
+        for sub, key in (("agents", "role:"), ("skills/specs", "name:")):
+            for template in (TEMPLATES_DIR / sub).glob("*.md"):
+                head = template.read_text(encoding="utf-8").split("---")[1]
+                self.assertIn(f"\n{key}", head, template.name)
+                self.assertIn("\ndescription: ", head, template.name)
+
 
 if __name__ == "__main__":
     unittest.main()

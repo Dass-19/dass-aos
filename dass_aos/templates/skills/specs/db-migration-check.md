@@ -3,6 +3,7 @@ id: 202610031418
 type: skill-spec
 status: evergreen
 name: "db-migration-check"
+description: "Valida que las migraciones de base de datos sean atómicas, reversibles y seguras con el comando de .aos/config.json."
 runtime: python
 applies_when: ["migrations", "*/migrations", "*/*/migrations", "alembic.ini", "*/alembic.ini", "prisma/schema.prisma", "db/migrate", "flyway.conf", "liquibase.properties"]
 entrypoint: "aos verify --type migration"

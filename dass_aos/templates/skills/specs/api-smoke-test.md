@@ -3,6 +3,7 @@ id: 202610031417
 type: skill-spec
 status: evergreen
 name: "api-smoke-test"
+description: "Verifica endpoints críticos según los contratos HTTP declarados en .aos/contracts/http/."
 runtime: python
 applies_when: [".aos/contracts/http/*"]
 entrypoint: ".aos/skills/bin/run_smoke_test.py"

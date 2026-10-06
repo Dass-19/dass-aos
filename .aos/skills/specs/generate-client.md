@@ -3,6 +3,7 @@ id: 202610031412
 type: skill-spec
 status: evergreen
 name: "generate-client"
+description: "Genera clientes tipados a partir de los contratos OpenAPI de .aos/contracts/http/."
 runtime: python
 applies_when: [".aos/contracts/http/*"]
 entrypoint: "aos generate-client"

@@ -3,6 +3,7 @@ id: 202610031400
 type: agent-role
 status: evergreen
 role: "Revisor de Código y Seguridad"
+description: "Audita código, estándares y seguridad antes de dar un cambio por listo; solo reporta, no edita. Úsalo tras cada cambio relevante."
 tools_allowed: ["read_file", "run_linter", "git_diff", "semgrep-scan", "checkov-scan"]
 constraints:
   - "No modificar archivos directamente"

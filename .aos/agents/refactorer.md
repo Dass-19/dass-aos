@@ -3,6 +3,7 @@ id: 202610031401
 type: agent-role
 status: evergreen
 role: "Refactorer"
+description: "Mejora estructura y reduce deuda técnica sin cambiar el comportamiento externo. Úsalo para refactors y limpieza."
 tools_allowed: ["read_file", "git_diff", "run_linter", "db-migration-check"]
 constraints:
   - "Mantener comportamiento observable idéntico salvo que el plan indique lo contrario"

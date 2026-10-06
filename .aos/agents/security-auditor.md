@@ -3,6 +3,7 @@ id: 202610031403
 type: agent-role
 status: evergreen
 role: "Security Auditor"
+description: "Verifica cumplimiento de knowledge/security.md y ausencia de hallazgos no mitigados (Semgrep, Checkov). Úsalo antes de releases o en código sensible."
 tools_allowed: ["read_file", "semgrep-scan", "checkov-scan", "git_diff"]
 constraints:
   - "No modificar archivos de aplicación directamente"

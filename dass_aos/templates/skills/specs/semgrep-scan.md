@@ -3,6 +3,7 @@ id: 202610031410
 type: skill-spec
 status: evergreen
 name: "semgrep-scan"
+description: "Análisis estático de seguridad (SAST) con Semgrep; soporta --dry-run si no está instalado."
 runtime: python
 entrypoint: "aos scan --tool semgrep"
 inputs:

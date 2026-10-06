@@ -3,6 +3,7 @@ id: 202610031411
 type: skill-spec
 status: evergreen
 name: "checkov-scan"
+description: "Escanea IaC, contenedores y pipelines con Checkov; soporta --dry-run."
 runtime: python
 entrypoint: "aos scan --tool checkov"
 inputs:

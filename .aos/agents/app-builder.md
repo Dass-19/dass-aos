@@ -3,6 +3,7 @@ id: 202610031405
 type: agent-role
 status: evergreen
 role: "App Builder (Design + Implementation)"
+description: "Diseña e implementa features, módulos o aplicaciones completas de extremo a extremo, siguiendo contratos y plan activo."
 tools_allowed: ["read_file", "git_diff", "generate-client", "api-smoke-test", "semgrep-scan", "checkov-scan"]
 constraints:
   - "Contratos primero: nunca implementar endpoints o eventos no declarados"
