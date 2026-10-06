@@ -67,7 +67,7 @@ Este comando genera:
 - `.aos/`: estado local del proyecto (contratos, planes, gotchas, ADRs, roles, skills y configuración).
 - `.aos/config.json` con los comandos de lint/test **detectados según el stack** (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`). Edítalo si la detección no acierta.
 - `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.cursorrules`, `.windsurfrules`: instrucciones gobernadas por DASS-AOS, preservando la sección `## Notas personalizadas del proyecto`.
-- `.git/hooks/pre-commit` (si hay repo git y no existe ya un hook): ejecuta `aos verify`. Nunca bloquea si DASS-AOS o Python no están instalados.
+- `.git/hooks/pre-commit` (si hay repo git y no existe ya un hook): ejecuta `aos verify`. Nunca bloquea si DASS-AOS o Python no están instalados. Si ya tenías un hook (p. ej. de 0.4.0), `aos init` no lo pisa: reemplázalo a mano por el que delega en `.aos/hooks/pre_commit.py`.
 
 ---
 
@@ -112,7 +112,7 @@ dass-aos/ (motor)
 mi-proyecto/
 ├── .aos/
 │   ├── config.json            Comandos de verificación
-│   ├── mcp-config.json        Servidores MCP (filesystem, codebase-memory)
+│   ├── mcp-config.json        Servidores MCP (codebase-memory)
 │   ├── agents/                Roles (generados + *.local.md del proyecto)
 │   ├── skills/specs/          Skills (generadas + *.local.md del proyecto)
 │   ├── skills/bin/            Utilidades standalone (smoke test, commit atómico)
