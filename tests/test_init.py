@@ -50,7 +50,7 @@ class TestBootstrap(unittest.TestCase):
         mcp_path = aos_dir / "mcp-config.json"
         self.assertTrue(mcp_path.exists())
         mcp_data = json.loads(mcp_path.read_text(encoding="utf-8"))
-        self.assertIn("filesystem", mcp_data["mcpServers"])
+        self.assertNotIn("filesystem", mcp_data["mcpServers"])
         self.assertIn("codebase-memory", mcp_data["mcpServers"])
 
         # Check instruction files in project root

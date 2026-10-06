@@ -1,7 +1,7 @@
 # GEMINI.md — Instrucciones del Proyecto
 
 <!-- DASS-AOS-MANAGED-START -->
-# Instrucciones Gestionadas por DASS-AOS (v0.5.0 · generado 2026-10-05)
+# Instrucciones Gestionadas por DASS-AOS (v0.5.0 · generado 2026-10-06)
 
 > **Raíz del Estado del Proyecto**: `.aos/`
 > Todas las reglas, planes activos, contratos, decisiones y trampas (gotchas) se almacenan localmente en `.aos/`.
@@ -28,7 +28,7 @@
 - **Skills y Herramientas**: Consulta especificaciones en `.aos/skills/specs/` y utilidades en `.aos/skills/bin/`.
 
 ## Directivas para Gemini / Antigravity
-- Aprovecha activamente las herramientas de MCP del filesystem y codebase-memory.
+- Aprovecha activamente las herramientas MCP de codebase-memory.
 - Sigue estrictamente las fases del plan activo sin saltar pasos de verificación.
 
 ## Aviso de Sincronización

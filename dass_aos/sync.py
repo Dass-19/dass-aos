@@ -157,7 +157,7 @@ def build_managed_block(target_file: str, project_root: Path) -> str:
         lines.extend([
             "",
             "## Directivas para Gemini / Antigravity",
-            "- Aprovecha activamente las herramientas de MCP del filesystem y codebase-memory.",
+            "- Aprovecha activamente las herramientas MCP de codebase-memory.",
             "- Sigue estrictamente las fases del plan activo sin saltar pasos de verificación.",
         ])
     elif target_file in RULE_FILES:

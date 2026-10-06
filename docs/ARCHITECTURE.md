@@ -20,7 +20,7 @@ Desde v0.4.0 se aplica una separación estricta de responsabilidades:
 Repositorio Destino
 ├── .aos/
 │   ├── config.json          ← Comandos inferidos o explícitos (lint, test, migración)
-│   ├── mcp-config.json       ← Servidores MCP preconfigurados (filesystem y codebase-memory)
+│   ├── mcp-config.json       ← Servidores MCP preconfigurados (codebase-memory)
 │   ├── contracts/            ← Especificaciones OpenAPI y esquemas CloudEvents
 │   ├── plans/active/         ← Planes de tareas de ejecución por fases
 │   ├── plans/archive/        ← Planes completados y archivados

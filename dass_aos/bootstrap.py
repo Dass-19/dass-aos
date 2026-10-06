@@ -64,10 +64,6 @@ def init_project(
         memory_db_path = aos_dir / "memory" / f"{project_name}.db"
         mcp_data = {
             "mcpServers": {
-                "filesystem": {
-                    "command": "npx",
-                    "args": ["-y", "@modelcontextprotocol/server-filesystem", str(project_root)],
-                },
                 "codebase-memory": {
                     "command": "codebase-memory-mcp",
                     "args": [],
