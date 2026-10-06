@@ -4,7 +4,7 @@ type: agent-role
 status: evergreen
 role: "Revisor de Código y Seguridad"
 description: "Audita código, estándares y seguridad antes de dar un cambio por listo; solo reporta, no edita. Úsalo tras cada cambio relevante."
-tools_allowed: ["read_file", "run_linter", "git_diff", "semgrep-scan", "checkov-scan"]
+tools_allowed: ["read", "search", "shell:git", "shell:aos", "mcp:codebase-memory", "mcp:context7"]
 constraints:
   - "No modificar archivos directamente"
   - "Generar únicamente reportes accionables con citas exactas (archivo:linea)"

@@ -24,6 +24,8 @@ GENERATED_MARKER = "<!-- DASS-AOS-GENERATED"
 ENGINE_DOC_DIRS = ["agents", "skills/specs"]
 # Sources that adapt-native translates; a change here means native artifacts are stale (ADR-004)
 NATIVE_SOURCES = ["agents", "skills", "hooks", "mcp-config.json"]
+# Neutral tools_allowed vocabulary; plus shell:<prefix> and mcp:<server> (ADR-004)
+TOOL_VOCABULARY = {"read", "search", "edit", "write", "shell", "web"}
 
 
 def _norm(text: str) -> str:
@@ -107,6 +109,32 @@ def get_available_skills(project_root: Optional[Path] = None) -> List[str]:
     # Comandos core del CLI
     skills |= {"init", "refresh", "verify", "scan", "plan", "sync"}
     return sorted(skills)
+
+
+def validate_tools_allowed(project_root: Path) -> None:
+    """Fail loudly if a role uses a value outside the neutral vocabulary (ADR-004)."""
+    aos_dir = project_root / AOS_DIR_NAME
+    mcp_file = aos_dir / "mcp-config.json"
+    servers = json.loads(mcp_file.read_text(encoding="utf-8")).get("mcpServers", {}) if mcp_file.exists() else {}
+    errors = []
+    for role in sorted((aos_dir / "agents").glob("*.md")):
+        for line in role.read_text(encoding="utf-8").splitlines():
+            if line.startswith("tools_allowed:"):
+                for value in json.loads(line.split(":", 1)[1]):
+                    kind, _, arg = value.partition(":")
+                    if value in TOOL_VOCABULARY or (kind == "shell" and arg):
+                        continue
+                    if kind == "mcp" and arg in servers:
+                        continue
+                    hint = f"servidor MCP no declarado en {mcp_file.name}" if kind == "mcp" else "valor desconocido"
+                    errors.append(f"{role.name}: '{value}' ({hint})")
+                break
+    if errors:
+        raise ValueError(
+            "tools_allowed inválido (vocabulario en ADR-004: "
+            + ", ".join(sorted(TOOL_VOCABULARY)) + ", shell:<prefijo>, mcp:<servidor>):\n  "
+            + "\n  ".join(errors)
+        )
 
 
 def native_source_hash(project_root: Path) -> str:
@@ -250,6 +278,7 @@ def sync_file(file_path: Path, project_root: Path, create_missing: bool = False)
 def sync_all_instructions(project_root: Path, create_missing: bool = False) -> Dict[str, str]:
     """Sincroniza todos los archivos de instrucciones de agentes en el proyecto destino."""
     results = sync_engine_docs(project_root)
+    validate_tools_allowed(project_root)
     target_files = AGENT_FILES + RULE_FILES
 
     for filename in target_files:

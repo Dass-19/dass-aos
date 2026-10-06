@@ -52,6 +52,7 @@ class TestBootstrap(unittest.TestCase):
         mcp_data = json.loads(mcp_path.read_text(encoding="utf-8"))
         self.assertNotIn("filesystem", mcp_data["mcpServers"])
         self.assertIn("codebase-memory", mcp_data["mcpServers"])
+        self.assertIn("url", mcp_data["mcpServers"]["context7"])
 
         # Check instruction files in project root
         self.assertTrue((self.temp_dir / "CLAUDE.md").exists())

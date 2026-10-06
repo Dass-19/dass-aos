@@ -102,6 +102,17 @@ class TestEngineDocs(unittest.TestCase):
         sync_all_instructions(self.temp_dir)
         self.assertIn("db-migration-check", claude.read_text(encoding="utf-8"))
 
+    def test_unknown_tools_allowed_value_fails_sync(self):
+        init_project(self.temp_dir)
+        role = self.temp_dir / ".aos" / "agents" / "custom.md"
+        role.write_text('---\ntools_allowed: ["read", "read_file", "mcp:nope", "shell:npm"]\n---\n', encoding="utf-8")
+        with self.assertRaises(ValueError) as ctx:
+            sync_all_instructions(self.temp_dir)
+        msg = str(ctx.exception)
+        self.assertIn("'read_file'", msg)
+        self.assertIn("'mcp:nope'", msg)
+        self.assertNotIn("shell:npm'", msg)
+
     def test_engine_docs_have_name_and_description(self):
         # Tools use `description` to decide when to delegate (adapt-native)
         for sub, key in (("agents", "role:"), ("skills/specs", "name:")):

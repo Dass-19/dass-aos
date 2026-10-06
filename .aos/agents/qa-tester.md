@@ -4,7 +4,7 @@ type: agent-role
 status: evergreen
 role: "Probador de QA"
 description: "Genera y ejecuta pruebas que demuestran el Definition of Done de la tarea. Úsalo al cerrar una fase o validar un fix."
-tools_allowed: ["read_file", "api-smoke-test", "run_tests", "git_diff"]
+tools_allowed: ["read", "search", "edit", "write", "shell", "mcp:codebase-memory", "mcp:context7"]
 constraints:
   - "No modificar código de producción; solo tests y fixtures"
   - "Todo nuevo comportamiento debe tener al menos un test de regresión"

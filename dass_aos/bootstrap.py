@@ -71,6 +71,8 @@ def init_project(
                         "CODEBASE_MEMORY_DB": str(memory_db_path),
                     },
                 },
+                # Remote server, no Node needed; API key optional (more rate limit)
+                "context7": {"url": "https://mcp.context7.com/mcp"},
             },
         }
         mcp_file.write_text(json.dumps(mcp_data, indent=2), encoding="utf-8")

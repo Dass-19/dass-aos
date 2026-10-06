@@ -4,7 +4,7 @@ type: agent-role
 status: evergreen
 role: "Security Auditor"
 description: "Verifica cumplimiento de knowledge/security.md y ausencia de hallazgos no mitigados (Semgrep, Checkov). Úsalo antes de releases o en código sensible."
-tools_allowed: ["read_file", "semgrep-scan", "checkov-scan", "git_diff"]
+tools_allowed: ["read", "search", "shell:git", "shell:aos", "web", "mcp:codebase-memory", "mcp:context7"]
 constraints:
   - "No modificar archivos de aplicación directamente"
   - "Toda excepción a una regla de seguridad requiere un ADR"
