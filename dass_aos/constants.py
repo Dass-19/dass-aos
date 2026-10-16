@@ -4,7 +4,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 
 # Managed block markers
 MANAGED_START = "<!-- DASS-AOS-MANAGED-START -->"
@@ -14,8 +14,30 @@ MANAGED_END = "<!-- DASS-AOS-MANAGED-END -->"
 LEGACY_MANAGED_START = "<!-- AI-AGENT-AOS-MANAGED-START -->"
 LEGACY_MANAGED_END = "<!-- AI-AGENT-AOS-MANAGED-END -->"
 
-# Target agent instruction files
-AGENT_FILES = ["CLAUDE.md", "AGENTS.md", "GEMINI.md"]
+# Instruction file each AI tool reads. A project only gets the files of the tools it uses (.aos/config.json "tools").
+# Antigravity also reads AGENTS.md, but GEMINI.md is enough and carries its delegation rule.
+TOOL_FILES = {
+    "claude-code": "CLAUDE.md",
+    "antigravity": "GEMINI.md",
+    "gemini-cli": "GEMINI.md",
+    "codex": "AGENTS.md",
+    "opencode": "AGENTS.md",
+    "cursor": ".cursorrules",
+    "windsurf": ".windsurfrules",
+}
+# What in a repo shows that a tool is already in use (for `aos init` without arguments)
+TOOL_SIGNS = {
+    "claude-code": [".claude", "CLAUDE.md"],
+    # Not plain `.agents/`: `.agents/skills/` is the shared agentskills location (Codex, playwright-cli --skills=agents)
+    "antigravity": [".agents/hooks.json", ".agents/skills.json", ".agents/plugins.json", ".agents/plugins",
+                    ".agents/rules", ".agent", "_agents", "_agent"],
+    "gemini-cli": [".gemini", "GEMINI.md"],
+    "codex": [".codex", "AGENTS.md"],
+    "opencode": [".opencode", "opencode.json"],
+    "cursor": [".cursor", ".cursorrules"],
+    "windsurf": [".windsurf", ".windsurfrules"],
+}
+INSTRUCTION_FILES = sorted(set(TOOL_FILES.values()))
 RULE_FILES = [".cursorrules", ".windsurfrules"]
 
 # Default project state directory name

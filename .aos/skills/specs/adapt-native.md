@@ -21,6 +21,8 @@ updated: 2026-10-06
 
 # Skill: adapt-native
 
+> **Claude Code y Antigravity tienen generador determinista: ejecuta `aos adapt-native <tool> --yes` y no sigas esta skill** (ADR-005). Esta skill es el respaldo para el resto de herramientas y para investigar un cambio de formato antes de actualizar un adaptador.
+>
 > La ejecuta **el agente de la herramienta en uso** (no el CLI) cuando no existe `.aos/native/<tool>.json` o `aos refresh` / `aos sync` lo marcan como DESACTUALIZADO.
 > Decisión y vocabulario en ADR-004. `.aos/` es la única fuente de verdad: lo generado aquí es desechable y regenerable.
 

@@ -6,12 +6,15 @@ import sys
 from pathlib import Path
 
 from .bootstrap import init_project
-from .constants import VERSION, configure_utf8_output
+from .constants import TOOL_FILES, VERSION, configure_utf8_output
 from .generator import generate_client
 from .memory import run_memory_refresh
 from .plans import create_new_plan
 from .scanners import run_security_scans
-from .sync import native_source_hash, sync_all_instructions
+from .native import ADAPTERS, get_adapter
+from .native.antigravity import refresh_hook
+from .native.manifest import native_source_hash
+from .sync import sync_all_instructions
 from .verifier import run_verification
 
 
@@ -30,7 +33,11 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # 1. init
-    init_p = subparsers.add_parser("init", help="Initialize DASS-AOS in a target repository")
+    init_p = subparsers.add_parser("init", help="Initialize DASS-AOS for the AI tools you use")
+    init_p.add_argument(
+        "tools", nargs="*",
+        help=f"AI tools: {', '.join(TOOL_FILES)} (default: those already configured or detected in the repo)",
+    )
     init_p.add_argument("--project-root", default=".", help="Root path of target project (default: current directory)")
     init_p.add_argument("--project-name", default=None, help="Name of the project (default: folder name)")
     init_p.add_argument("--force", action="store_true", help="Force overwrite existing configuration files")
@@ -38,15 +45,21 @@ def build_parser() -> argparse.ArgumentParser:
     # 2. sync
     sync_p = subparsers.add_parser("sync", help="Synchronize CLAUDE.md, AGENTS.md, GEMINI.md, and editor rules")
     sync_p.add_argument("--project-root", default=".", help="Root path of target project (default: current directory)")
-    sync_p.add_argument("--create-missing", action="store_true", default=True, help="Create files if they don't exist")
 
     native_p = subparsers.add_parser("native-hash", help="Print the source hash that adapt-native records in .aos/native/<tool>.json")
     native_p.add_argument("--project-root", default=".", help="Root path of target project (default: current directory)")
+
+    adapt_p = subparsers.add_parser("adapt-native", help="Generate the native files of an AI tool from .aos/ (ADR-005)")
+    adapt_p.add_argument("tool", help=f"Tool id: {', '.join(sorted(ADAPTERS))} (others: skill adapt-native)")
+    adapt_p.add_argument("--project-root", default=".", help="Root path of target project (default: current directory)")
+    adapt_p.add_argument("--dry-run", action="store_true", help="Show the changes without writing anything")
+    adapt_p.add_argument("--yes", action="store_true", help="Also write hooks/permissions (sensitive config)")
 
     # 3. refresh
     refresh_p = subparsers.add_parser("refresh", help="Session-start hook: refresh gotchas and memory status")
     refresh_p.add_argument("--project-root", default=".", help="Root path of target project (default: current directory)")
     refresh_p.add_argument("--gotchas-limit", type=int, default=5, help="Number of recent gotchas to display")
+    refresh_p.add_argument("--hook", choices=["antigravity"], help="Run as a tool hook: read its JSON on stdin, answer JSON")
 
     # 4. scan
     scan_p = subparsers.add_parser("scan", help="Run Semgrep and Checkov security scans")
@@ -97,18 +110,24 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "init":
             root = Path(args.project_root).resolve()
-            res = init_project(root, project_name=args.project_name, force=args.force)
-            print(f"\n[aos init] Successfully initialized DASS-AOS in: {res['project_root']}")
-            print(f"Local State Directory: {res['aos_dir']}")
-            print("Instruction files updated:")
+            res = init_project(root, project_name=args.project_name, force=args.force, tools=args.tools, native=True)
+            print(f"\n[aos init] DASS-AOS inicializado en: {res['project_root']}")
+            print(f"Herramientas: {', '.join(res['tools'])} (en .aos/config.json; añade otra con `aos init <herramienta>`)")
+            print("Archivos de instrucciones:")
             for fname, action in res["sync_results"].items():
                 print(f"  - {fname}: {action}")
-            print("\nNext step: Run 'aos refresh' at the start of each agent session.")
+            for tool, lines in res["native_results"].items():
+                print(f"Nativos de {tool}:" + ("" if lines else " al día"))
+                for line in lines:
+                    print(f"  - {line}")
+                if any("PENDIENTE" in line for line in lines):
+                    print(f"  -> Revisa los hooks pendientes y aplícalos con `aos adapt-native {tool} --yes`.")
+            print("\nSiguiente paso: 'aos refresh' al inicio de cada sesión del agente.")
             return 0
 
         elif args.command == "sync":
             root = Path(args.project_root).resolve()
-            res = sync_all_instructions(root, create_missing=args.create_missing)
+            res = sync_all_instructions(root)
             print(f"\n[aos sync] Agent instruction sync complete for: {root}")
             for fname, action in res.items():
                 print(f"  - {fname}: {action}")
@@ -118,8 +137,24 @@ def main(argv: list[str] | None = None) -> int:
             print(native_source_hash(Path(args.project_root).resolve()))
             return 0
 
+        elif args.command == "adapt-native":
+            adapter = get_adapter(args.tool, Path(args.project_root).resolve())
+            changes = adapter.run(dry_run=args.dry_run, yes=args.yes)
+            prefix = "[aos adapt-native] (dry-run) " if args.dry_run else "[aos adapt-native] "
+            print(prefix + (f"{len(changes)} cambio(s) en {args.tool}:" if changes else f"{args.tool} al día, sin cambios."))
+            for line in changes + [f"AVISO: {w}" for w in adapter.warnings]:
+                print(f"  - {line}")
+            return 0
+
         elif args.command == "refresh":
             root = Path(args.project_root).resolve()
+            if args.hook:
+                try:
+                    stdin = sys.stdin.buffer.read()
+                except (OSError, ValueError, AttributeError):
+                    stdin = b""
+                print(refresh_hook(root, stdin))
+                return 0
             run_memory_refresh(root, gotchas_limit=args.gotchas_limit)
             return 0
 

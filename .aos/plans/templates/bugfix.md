@@ -18,10 +18,14 @@ created: {{YYYY-MM-DD}}
 - Gotchas relacionados: []
 
 ## Fases
-- [ ] Fase 1: Reproducir y aislar
+- [ ] Fase 1: Reproducir y aislar (en vivo con `live-verify` si es UI, API o CLI)
+  - Gate: pasos de reproducción y evidencia del fallo anotados aquí
 - [ ] Fase 2: Escribir test de regresión que falle
-- [ ] Fase 3: Implementar el fix mínimo
-- [ ] Fase 4: Verificar (tests + security skills en dry-run si hace falta)
+  - Gate: el test falla con el código actual
+- [ ] Fase 3: Implementar el fix mínimo en la causa raíz (revisar todos los llamadores)
+  - Gate: el test pasa + `aos verify`
+- [ ] Fase 4: Verificar (`live-verify` sobre la reproducción, una lente de `adversarial-review`, security skills en dry-run si hace falta)
+  - Gate: la reproducción ya no falla
 - [ ] Fase 5: Cierre (plan, gotcha si aplica, sync)
 
 ## Discovery Trail / Bloqueos

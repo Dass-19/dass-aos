@@ -52,3 +52,39 @@ test-client/
 
 # DASS-AOS: manifiestos de adapt-native (por desarrollador)
 .aos/native/
+
+# >>> DASS-AOS adapt-native: antigravity (generado, no editar) >>>
+.agents/hooks.json
+.agents/skills/adversarial-review/SKILL.md
+.agents/skills/api-smoke-test/SKILL.md
+.agents/skills/bootstrap-project/SKILL.md
+.agents/skills/generate-client/SKILL.md
+.agents/skills/git-atomic-commit/SKILL.md
+.agents/skills/live-verify/SKILL.md
+.agents/skills/memory-refresh/SKILL.md
+.agents/skills/phased-delivery/SKILL.md
+.agents/skills/semgrep-scan/SKILL.md
+.agents/skills/sync-agent-instructions/SKILL.md
+# <<< DASS-AOS adapt-native: antigravity <<<
+
+# >>> DASS-AOS adapt-native: claude-code (generado, no editar) >>>
+.claude/agents/adversarial-verifier.md
+.claude/agents/app-builder.md
+.claude/agents/architect.md
+.claude/agents/qa-tester.md
+.claude/agents/refactorer.md
+.claude/agents/reviewer.md
+.claude/agents/security-auditor.md
+.claude/settings.local.json
+.claude/skills/adversarial-review/SKILL.md
+.claude/skills/api-smoke-test/SKILL.md
+.claude/skills/bootstrap-project/SKILL.md
+.claude/skills/generate-client/SKILL.md
+.claude/skills/git-atomic-commit/SKILL.md
+.claude/skills/live-verify/SKILL.md
+.claude/skills/memory-refresh/SKILL.md
+.claude/skills/phased-delivery/SKILL.md
+.claude/skills/semgrep-scan/SKILL.md
+.claude/skills/sync-agent-instructions/SKILL.md
+# <<< DASS-AOS adapt-native: claude-code <<<
+.playwright-cli/

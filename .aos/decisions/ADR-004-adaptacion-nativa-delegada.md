@@ -1,7 +1,7 @@
 ---
 id: 202610061500
 type: decision
-status: vigente
+status: parcialmente supersedido por ADR-005
 created: 2026-10-06
 ---
 

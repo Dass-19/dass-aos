@@ -66,20 +66,26 @@ El núcleo no tiene dependencias. Las herramientas externas son opcionales; `aos
 |---|---|---|---|
 | Semgrep | SAST (`aos scan`) | Siempre | `pip install "dass-aos[scan]"` o `pip install semgrep`. En Windows nativo está en beta: usa `PYTHONUTF8=1`; si falla, WSL o Docker. |
 | Checkov | IaC, contenedores y pipelines (`aos scan`) | Solo si hay IaC (Terraform, Bicep, Dockerfile, Helm, Kustomize, Serverless, CDK, CI pipelines… ver `applies_when` en `checkov-scan.md`) | `pip install "dass-aos[scan]"` o `pip install checkov` |
-| codebase-memory | Grafo estructural del código (MCP) | Siempre | Binario `codebase-memory-mcp` en el PATH (ver su repositorio) |
+| codebase-memory | Grafo estructural del código (MCP) | Siempre | Binario `codebase-memory-mcp` en el PATH (ver su repositorio). Indexa cada proyecto en la base de datos del usuario, no en `.aos/`: la primera vez, `index_repository` con la ruta del proyecto |
 | context7 | Documentación actualizada de librerías (MCP); obligatorio para `adapt-native` | Siempre | Servidor remoto `https://mcp.context7.com/mcp`, sin instalación. API key opcional (más rate limit) en context7.com |
+| playwright-cli | Vía web de `live-verify`: el agente abre la app en un navegador sin interfaz, la recorre, captura y lee la consola | Solo si hay frontend web (`package.json` o `*.html` a uno o dos niveles) | `npm install -g @playwright/cli@latest` y una vez `playwright-cli install --skills -g` (skill global de Claude Code). Otras herramientas leen la `SKILL.md` que indica `playwright-cli --help` |
 
 Los servidores MCP se declaran una sola vez, de forma neutral, en `.aos/mcp-config.json`; `adapt-native` los traduce al formato de tu herramienta.
 
-Desde la raíz del proyecto a gestionar:
+Desde la raíz del proyecto a gestionar, indicando las herramientas de IA que usas:
 ```bash
-aos init
+aos init antigravity                  # una
+aos init claude-code antigravity      # varias; más adelante, `aos init <otra>` la añade
 ```
+Herramientas: `claude-code`, `antigravity`, `gemini-cli`, `codex`, `opencode`, `cursor`, `windsurf`. Sin argumento, `aos init` usa las ya configuradas o las que detecta en el repo: carpetas propias (`.claude/`, `.cursor/`, `.agents/hooks.json`…) o archivos de instrucciones que no haya escrito DASS-AOS. `.agents/skills/` no cuenta, porque es el estándar compartido de skills. Si no encuentra ninguna, no escribe nada y te pide que la indiques.
+
+**Proyectos anteriores a 0.6.0** (tienen los cinco archivos de instrucciones): ejecuta `aos init <tus herramientas>` una vez para declararlas. Los archivos de las demás no se borran; si no los usas, bórralos tú y ya no se recrearán.
 
 Este comando genera:
 - `.aos/`: estado local del proyecto (contratos, planes, gotchas, ADRs, roles, skills y configuración).
 - `.aos/config.json` con los comandos de lint/test **detectados según el stack** (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`). Edítalo si la detección no acierta.
-- `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.cursorrules`, `.windsurfrules`: instrucciones gobernadas por DASS-AOS, preservando la sección `## Notas personalizadas del proyecto`.
+- **Solo el archivo de instrucciones de cada herramienta elegida**, gobernado por DASS-AOS y preservando la sección `## Notas personalizadas del proyecto`: `claude-code` → `CLAUDE.md`; `antigravity` y `gemini-cli` → `GEMINI.md`; `codex` y `opencode` → `AGENTS.md`; `cursor` → `.cursorrules`; `windsurf` → `.windsurfrules`. La elección queda en `.aos/config.json` (`"tools"`), y `aos sync` crea solo esos archivos (los que ya existan de otras herramientas se siguen actualizando, no se borran).
+- Para `claude-code` y `antigravity`, sus nativos (subagentes y skills) vía `aos adapt-native`. El hook de inicio de sesión queda **pendiente** hasta que lo revises y ejecutes `aos adapt-native <herramienta> --yes`.
 - `.git/hooks/pre-commit` (si hay repo git y no existe ya un hook): ejecuta `aos verify`. Nunca bloquea si DASS-AOS o Python no están instalados. Si ya tenías un hook (p. ej. de 0.4.0), `aos init` no lo pisa: reemplázalo a mano por el que delega en `.aos/hooks/pre_commit.py`.
 
 ---
@@ -99,19 +105,42 @@ Los roles y skills del motor son genéricos a propósito. Cada proyecto los adap
 - Los `.aos/agents/*.md` y `.aos/skills/specs/*.md` del motor llevan el marcador `<!-- DASS-AOS-GENERATED`: **no los edites**. Si `sync` encuentra uno editado a mano, no lo sobreescribe y te indica que muevas los cambios al `.local.md`.
 - Una skill puede declarar `applies_when: ["glob", ...]` en su frontmatter: solo se lista en las instrucciones si algún glob encuentra archivos en el proyecto (p. ej. `db-migration-check` solo aparece si hay `migrations/`, `alembic.ini`, `prisma/schema.prisma`…).
 
-## 5.1 Integración nativa con tu herramienta (`adapt-native`)
+## 5.0 Flujo de entrega: fases, verificación en vivo y revisión adversarial
 
-DASS-AOS no genera formatos de cada proveedor ([ADR-004](.aos/decisions/ADR-004-adaptacion-nativa-delegada.md)). El bloque gestionado le ordena al agente de tu herramienta (Claude Code, Antigravity, Codex, Cursor, OpenCode…) ejecutar la skill `adapt-native`, que:
+Tres skills del motor ([ADR-006](.aos/decisions/ADR-006-flujo-de-entrega-del-motor.md)), sacadas de proyectos reales:
 
-1. Consulta el formato vigente de **su** herramienta con context7 y, si hay dudas, en la documentación oficial web.
-2. Genera desde `.aos/` sus subagentes (un rol = un subagente), skills, servidores MCP y el hook de inicio de sesión que ejecuta `aos refresh`.
-3. Traduce `tools_allowed` del vocabulario neutral (`read`, `search`, `edit`, `write`, `shell`, `shell:<prefijo>`, `web`, `mcp:<servidor>`) a las herramientas nativas. `aos sync` falla si un rol usa un valor fuera del vocabulario.
-4. Pide tu aprobación del diff antes de escribir hooks, permisos o MCP.
-5. Registra lo hecho en `.aos/native/<herramienta>.json`.
+| Skill | Cuándo | Qué hace |
+|---|---|---|
+| `phased-delivery` | Cambios que cruzan capas o tocan más de tres archivos | Línea base → exploración → decisiones del usuario → plan con un `Gate:` por fase → implementación en orden de dependencias → `live-verify` → `adversarial-review` → cierre documentado |
+| `live-verify` | Al cerrar una fase que toca UI, API, CLI o escritorio | Quien implementa levanta la app en un entorno desechable, la ejercita (navegador con `playwright-cli`, `curl`, el comando real o scripts de escritorio), mira la evidencia y se corrige, hasta 3 rondas |
+| `adversarial-review` | Cambios de más de un archivo | Un revisor (`reviewer`) por lente → un `adversarial-verifier` intenta refutar cada hallazgo (en caso de duda, falso) → un solo agente corrige lo confirmado, con una comprobación vista fallar |
 
-**Qué se hace cumplir:** depende de la herramienta y queda registrado en el manifiesto (`enforcement`). Donde la herramienta puede restringir herramientas por agente o tiene evento de inicio de sesión, es `native`; donde no (p. ej. Antigravity no tiene evento de inicio de sesión), la regla queda como texto en las instrucciones y es solo una `convention`.
+Lo propio de cada proyecto va en el `.local.md` de cada skill: lentes y qué buscar, gates con comandos exactos, cómo levantar la app y los anchos de pantalla. **El entorno desechable se declara solo en `live-verify.local.md`.** La evidencia web queda en `.playwright-cli/`, que `aos init` y `aos sync` añaden a `.gitignore`.
 
-**Por desarrollador:** lo generado y `.aos/native/` no se commitean (`aos init` ignora `.aos/native/`; `adapt-native` añade sus archivos a un bloque marcado de `.gitignore`). Cada dev ejecuta `adapt-native` en su herramienta. Si cambias roles, skills, hooks o MCP en `.aos/`, `aos refresh` y `aos sync` avisan con **DESACTUALIZADO** y basta con volver a ejecutarla.
+**Proyectos con versiones propias** (p. ej. una `adversarial-review.md` hecha a mano): `aos sync` las omite con "OMITIDO: editado a mano". Mueve lo propio del proyecto a `<skill>.local.md`, borra el archivo y vuelve a ejecutar `aos sync`. Los hooks (`.aos/hooks/*.md`) y las plantillas de plan son del proyecto y `sync` no los toca: para recibir la versión nueva, bórralos y ejecuta `aos init`.
+
+## 5.1 Integración nativa con tu herramienta (`aos adapt-native`)
+
+`.aos/` es la fuente única. Cada herramienta de IA necesita sus propios formatos (subagentes, skills, hooks), que se generan desde `.aos/` y **no se commitean**: cada dev los genera en su máquina.
+
+**Claude Code y Antigravity: generador determinista** ([ADR-005](.aos/decisions/ADR-005-generador-nativo-por-herramienta.md)):
+```bash
+aos adapt-native claude-code --yes      # o: antigravity. --dry-run muestra los cambios sin escribir
+```
+- Sin `--yes` escribe subagentes y skills, pero **no** hooks ni permisos: los muestra como PENDIENTE para que los revises.
+- Es idempotente: una segunda ejecución dice "al día, sin cambios". Nunca toca un archivo sin el marcador `DASS-AOS-GENERATED`, fusiona JSON conservando lo ajeno y borra solo lo que generó y ya no aplica.
+- No crea servidores MCP: reutiliza los que tengas a nivel de usuario (`codebase-memory`, `context7`) y avisa si falta alguno.
+
+| | Claude Code | Antigravity 2.0 |
+|---|---|---|
+| Roles | `.claude/agents/<rol>.md`; `tools_allowed` → `disallowedTools` (**nativo**). Prefijos de shell y subconjunto de MCP: convención | Sin subagentes en archivo: el bloque gestionado de `GEMINI.md` indica delegar con `define_subagent` y qué roles van sin escritura (**convención**) |
+| Skills | `.claude/skills/<x>/SKILL.md` | `.agents/skills/<x>/SKILL.md` |
+| Inicio de sesión | Hook `SessionStart` en `.claude/settings.local.json` (**nativo**) | Hook `PreInvocation` en `.agents/hooks.json`, que inyecta `aos refresh` una vez por conversación (**emulado**) |
+| MCP | Usuario (`~/.claude.json`) o plugin | Global (`~/.gemini/config/mcp_config.json`) |
+
+**Otras herramientas** (Codex, Cursor, OpenCode, Gemini CLI…): el bloque gestionado le ordena a su agente ejecutar la skill `adapt-native` ([ADR-004](.aos/decisions/ADR-004-adaptacion-nativa-delegada.md)), que consulta el formato vigente con context7 o la web, genera lo equivalente y registra lo hecho. Traduce `tools_allowed` del vocabulario neutral (`read`, `search`, `edit`, `write`, `shell`, `shell:<prefijo>`, `web`, `mcp:<servidor>`); `aos sync` falla si un rol usa un valor fuera del vocabulario.
+
+**Manifiesto y desincronización:** lo hecho queda en `.aos/native/<herramienta>.json` (ignorado en git), con `enforcement` (qué es nativo y qué convención) y `source_hash`. Si cambias roles, skills, hooks o MCP en `.aos/`, `aos refresh` y `aos sync` marcan **DESACTUALIZADO** e indican el comando que hay que volver a ejecutar.
 
 ---
 
@@ -150,7 +179,6 @@ mi-proyecto/
 │   ├── knowledge/gotchas/     Trampas y aprendizajes no obvios
 │   ├── decisions/             ADRs del proyecto
 │   ├── ci/                    Pipelines de seguridad listos para copiar
-│   └── memory/                Base de datos de codebase-memory
 ├── CLAUDE.md, AGENTS.md, GEMINI.md, .cursorrules, .windsurfrules
 ```
 
@@ -160,12 +188,14 @@ mi-proyecto/
 
 | Comando | Función Técnica | Ejecutado por |
 |---|---|---|
-| `aos init [--project-root <ruta>]` | Inicializa `.aos/` y sincroniza agent instruction files. | Desarrollador |
+| `aos init [<herramienta>...] [--project-root <ruta>]` | Inicializa `.aos/` para las herramientas indicadas (o detectadas): su archivo de instrucciones y, si tienen generador, sus nativos. Repetirlo con otra herramienta la añade. | Desarrollador |
 | `aos refresh [--gotchas-limit <N>]` | Extrae gotchas recientes, codebase-memory graph status y active task. | Agente (Session-Start) |
 | `aos plan new <tipo> --title <título>` | Genera un plan activo a partir de template (`feature`, `bugfix`, `refactor`, `security`). | Agente (Pre-Task) |
 | `aos verify [--type lint\|test\|migration] [--strict]` | Ejecuta linters, test suites y migrations (configurados o autodetectados). Omite herramientas no instaladas salvo con `--strict`. | Agente (Post-Task) |
 | `aos scan [--tool semgrep\|checkov] [--dry-run]` | Ejecuta SAST (Semgrep) e IaC (Checkov, solo si hay IaC o con `--tool checkov`) con modo dry-run local. | Agente (Post-Task) |
-| `aos native-hash` | Imprime el hash de las fuentes que `adapt-native` registra en su manifiesto. | Agente (`adapt-native`) |
+| `aos adapt-native <herramienta> [--dry-run] [--yes]` | Genera los nativos de `claude-code` o `antigravity` desde `.aos/` (hooks y permisos solo con `--yes`). | Desarrollador / Agente |
+| `aos refresh --hook antigravity` | Lo invoca el hook de Antigravity: lee su JSON por stdin e inyecta el refresco una vez por conversación. | Antigravity |
+| `aos native-hash` | Imprime el hash de las fuentes que `adapt-native` registra en su manifiesto. | Agente (skill `adapt-native`) |
 | `aos sync [--project-root <ruta>]` | Regenera managed blocks y roles/skills del motor respetando notas humanas y `.local.md`. | Agente (Post-Task) |
 | `aos generate-client --contract <ruta>` | Genera typed client stubs desde contratos OpenAPI. | Agente / Desarrollador |
 
@@ -180,7 +210,8 @@ Ubicados en `.aos/agents/`, definen tools permitidas, constraints y output proto
 - **Reviewer** (`reviewer.md`): Code & security review estructurado en formato `file:line`.
 - **Refactorer** (`refactorer.md`): Mejoras estructurales garantizando comportamiento observable idéntico.
 - **Security Auditor** (`security-auditor.md`): Auditoría de autenticación, gestión de secrets, IaC y dependencias.
-- **QA Tester** (`qa-tester.md`): Generación de test suites, regression tests y contract smoke tests.
+- **QA Tester** (`qa-tester.md`): Generación de test suites, regression tests y contract smoke tests; evidencia en vivo con `live-verify`.
+- **Adversarial Verifier** (`adversarial-verifier.md`): Intenta refutar cada hallazgo de revisión contra el código real antes de corregirlo; no edita.
 
 ---
 

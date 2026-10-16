@@ -1,8 +1,12 @@
 {
   "project_name": "dass-aos",
-  "aos_version": "0.5.0",
+  "aos_version": "0.6.0",
   "lint_command": "ruff check .",
   "test_command": "python -m unittest discover -s tests -p \"test_*.py\"",
   "migration_command": null,
-  "client_generator": "generic"
+  "client_generator": "generic",
+  "tools": [
+    "claude-code",
+    "antigravity"
+  ]
 }

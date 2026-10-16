@@ -23,9 +23,13 @@ updated: 2026-10-05
 
 # Skill: bootstrap-project
 
-> Inicializa DASS-AOS en cualquier repositorio, creando la estructura `.aos/` y los archivos de instrucciones de agentes sincronizados (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.cursorrules`).
+> Inicializa DASS-AOS en cualquier repositorio para las herramientas de IA que se usan: crea `.aos/`, el archivo de instrucciones de cada herramienta (y nada más) y, para `claude-code` y `antigravity`, sus nativos.
 
 ## Comando
 ```bash
-aos init [--project-root <path>] [--project-name <name>]
+aos init [<herramienta>...] [--project-root <path>] [--project-name <name>]
+# herramientas: claude-code, antigravity, gemini-cli, codex, opencode, cursor, windsurf
 ```
+- Sin herramienta: usa las de `.aos/config.json` o las que detecta en el repo; si no hay ninguna, falla sin escribir nada.
+- Ejecutarlo otra vez con otra herramienta la añade a `.aos/config.json` (`"tools"`).
+- Los hooks de inicio de sesión quedan pendientes: revísalos y aplícalos con `aos adapt-native <herramienta> --yes`.

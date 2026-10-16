@@ -49,8 +49,9 @@ def create_new_plan(
     active_dir = project_root / AOS_DIR_NAME / "plans" / "active"
     active_dir.mkdir(parents=True, exist_ok=True)
 
-    existing = list(active_dir.glob("*.md"))
-    next_index = len(existing) + 1
+    # Highest NNN- prefix across active/ and archive/: counting files reuses numbers once plans are archived
+    numbers = [int(m[1]) for p in active_dir.parent.glob("*/*.md") if (m := re.match(r"(\d+)-", p.name))]
+    next_index = max(numbers, default=0) + 1
     slug = slugify(title)
     target_filename = f"{next_index:03d}-{slug}.md"
     target_path = active_dir / target_filename

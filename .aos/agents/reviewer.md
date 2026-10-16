@@ -23,6 +23,7 @@ updated: 2026-10-05
 - Auditoría contra `.aos/knowledge/security.md` y `.aos/contracts/`.
 - Ejecución de Semgrep y Checkov (respetando `--dry-run` si las herramientas no están instaladas).
 - Comentarios con formato `archivo:línea` + severidad + sugerencia de corrección.
+- En la skill `adversarial-review` es el revisor de **una lente**: lee el diff y los archivos completos, y reporta solo defectos reales con `failure_scenario`, nada de estilo. Sus hallazgos pasan al `adversarial-verifier` antes de corregirse.
 
 ## Protocolo de Salida
 ```markdown

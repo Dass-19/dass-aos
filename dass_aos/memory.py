@@ -7,7 +7,11 @@ from typing import List, Optional, Tuple
 
 from .constants import AOS_DIR_NAME, configure_utf8_output
 from .scanners import check_tool_installed, checkov_applies
-from .sync import native_status
+from .native.manifest import native_status
+
+# live-verify's web path (ADR-006) needs playwright-cli only when there is a web frontend
+WEB_FRONTEND_GLOBS = ["package.json", "*/package.json", "*.html", "*/*.html"]
+NOT_FRONTEND_DIRS = {"htmlcov", "site"}  # coverage and mkdocs output, not an app
 
 
 def list_recent_gotchas(project_root: Path, limit: int = 5) -> List[Tuple[str, Path, dt.date]]:
@@ -45,22 +49,6 @@ def list_recent_gotchas(project_root: Path, limit: int = 5) -> List[Tuple[str, P
     return results
 
 
-def get_memory_db_info(project_root: Path) -> List[Tuple[str, int, dt.date]]:
-    """Obtiene información sobre las bases de datos locales de codebase-memory."""
-    db_dirs = [
-        project_root / AOS_DIR_NAME / "memory",
-        project_root / "codebase-memory",
-    ]
-    dbs = []
-    for d in db_dirs:
-        if d.exists():
-            for db_file in d.glob("*.db"):
-                size = db_file.stat().st_size
-                mtime = dt.datetime.fromtimestamp(db_file.stat().st_mtime, dt.timezone.utc).date()
-                dbs.append((db_file.name, size, mtime))
-    return dbs
-
-
 def get_active_plan_info(project_root: Path) -> Optional[Tuple[str, str]]:
     """Encuentra el primer plan activo y su siguiente tarea pendiente."""
     plans_dir = project_root / AOS_DIR_NAME / "plans" / "active"
@@ -70,7 +58,10 @@ def get_active_plan_info(project_root: Path) -> Optional[Tuple[str, str]]:
     if not plans_dir.exists():
         return None
 
-    plans = sorted(p for p in plans_dir.glob("*.md") if p.name.lower() != "readme.md")
+    # NNN-x.design.md sorts before NNN-x.md and is shared context, not a plan (phased-delivery §3)
+    plans = sorted(
+        p for p in plans_dir.glob("*.md") if p.name.lower() != "readme.md" and not p.name.endswith(".design.md")
+    )
     if not plans:
         return None
 
@@ -99,7 +90,20 @@ def missing_dependencies(project_root: Path) -> List[Tuple[str, str]]:
     ]
     if checkov_applies(project_root):
         deps.append(("checkov", "pip install dass-aos[scan] (o pip install checkov)"))
-    return [(name, hint) for name, hint in deps if not check_tool_installed(name)]
+    missing = [(name, hint) for name, hint in deps if not check_tool_installed(name)]
+    # ponytail: shallow globs, a web app nested deeper than one folder goes undetected
+    if any(
+        p.relative_to(project_root).parts[0] not in NOT_FRONTEND_DIRS
+        for g in WEB_FRONTEND_GLOBS
+        for p in project_root.glob(g)
+    ):
+        if not check_tool_installed("playwright-cli"):
+            missing.append(("playwright-cli", "npm install -g @playwright/cli@latest && playwright-cli install --skills -g"))
+        elif (project_root / AOS_DIR_NAME / "native" / "claude-code.json").exists() and not any(
+            (base / ".claude" / "skills" / "playwright-cli").exists() for base in (Path.home(), project_root)
+        ):
+            missing.append(("skill playwright-cli (Claude Code)", "playwright-cli install --skills -g"))
+    return missing
 
 
 def run_memory_refresh(project_root: Path, gotchas_limit: int = 5) -> str:
@@ -126,14 +130,8 @@ def run_memory_refresh(project_root: Path, gotchas_limit: int = 5) -> str:
         "## 2. Estado de Memoria del Código (Codebase Memory)",
     ])
 
-    dbs = get_memory_db_info(project_root)
-    if dbs:
-        for name, size, date_val in dbs:
-            lines.append(f"- Base de datos del Grafo: `{name}` ({size} bytes, actualizada {date_val.isoformat()})")
-        lines.append("- **Guía**: Antes de modificar código, ejecuta `search_graph` o `query_graph` para inspeccionar dependencias entre módulos.")
-    else:
-        lines.append("- No se encontró base de datos local `.db` aún en `.aos/memory/`.")
-        lines.append("- El grafo de memoria se inicializará en la primera ejecución de `codebase-memory-mcp`.")
+    lines.append("- codebase-memory indexa cada proyecto en la base de datos del usuario (no en `.aos/`). Si `search_graph` no encuentra este proyecto, ejecuta `index_repository` con su ruta.")
+    lines.append("- **Guía**: Antes de modificar código, ejecuta `search_graph` o `query_graph` para inspeccionar dependencias entre módulos.")
 
     lines.extend([
         "",
@@ -157,7 +155,7 @@ def run_memory_refresh(project_root: Path, gotchas_limit: int = 5) -> str:
     if status:
         lines.extend(f"- `{tool}`: {state}" for tool, state in status.items())
     else:
-        lines.append("- Ninguna herramienta adaptada aún: ejecuta la skill `adapt-native` en tu herramienta.")
+        lines.append("- Ninguna herramienta adaptada aún: `aos adapt-native claude-code --yes` / `aos adapt-native antigravity --yes`, o la skill `adapt-native` en otras herramientas.")
 
     lines.extend(["", "## 5. Dependencias Externas"])
     missing = missing_dependencies(project_root)

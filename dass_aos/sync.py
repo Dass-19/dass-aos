@@ -1,29 +1,27 @@
 """Motor de sincronización para archivos de instrucciones de agentes."""
 from __future__ import annotations
 
-import datetime as dt
-import hashlib
 import json
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from .constants import (
-    AGENT_FILES,
     AOS_DIR_NAME,
+    INSTRUCTION_FILES,
     LEGACY_MANAGED_END,
     LEGACY_MANAGED_START,
     MANAGED_END,
     MANAGED_START,
     RULE_FILES,
     TEMPLATES_DIR,
+    TOOL_FILES,
+    TOOL_SIGNS,
     VERSION,
 )
 
 
 GENERATED_MARKER = "<!-- DASS-AOS-GENERATED"
 ENGINE_DOC_DIRS = ["agents", "skills/specs"]
-# Sources that adapt-native translates; a change here means native artifacts are stale (ADR-004)
-NATIVE_SOURCES = ["agents", "skills", "hooks", "mcp-config.json"]
 # Neutral tools_allowed vocabulary; plus shell:<prefix> and mcp:<server> (ADR-004)
 TOOL_VOCABULARY = {"read", "search", "edit", "write", "shell", "web"}
 
@@ -137,46 +135,37 @@ def validate_tools_allowed(project_root: Path) -> None:
         )
 
 
-def native_source_hash(project_root: Path) -> str:
-    """Hash of everything adapt-native reads, plus which skills currently apply."""
-    aos_dir = project_root / AOS_DIR_NAME
-    h = hashlib.sha256()
-    for name in NATIVE_SOURCES:
-        src = aos_dir / name
-        files = [src] if src.is_file() else sorted(src.rglob("*")) if src.is_dir() else []
-        for p in files:
-            if p.is_file() and "__pycache__" not in p.parts:
-                h.update(p.relative_to(aos_dir).as_posix().encode("utf-8"))
-                h.update(p.read_bytes().replace(b"\r\n", b"\n"))
-    h.update("\n".join(get_available_skills(project_root)).encode("utf-8"))
-    return h.hexdigest()[:16]
-
-
-def native_status(project_root: Path) -> Dict[str, str]:
-    """Tool -> status for each .aos/native/<tool>.json manifest written by adapt-native."""
-    current = native_source_hash(project_root)
-    status = {}
-    for manifest in sorted((project_root / AOS_DIR_NAME / "native").glob("*.json")):
-        try:
-            ok = json.loads(manifest.read_text(encoding="utf-8")).get("source_hash") == current
-        except (ValueError, OSError):
-            ok = False
-        status[manifest.stem] = "al día" if ok else "DESACTUALIZADO: ejecuta la skill adapt-native"
-    return status
+def antigravity_delegation(project_root: Path) -> List[str]:
+    """Antigravity loads no subagent files (ADR-005): roles are delegated in-session, read-only ones flagged."""
+    read_only = []
+    for role in get_available_agents(project_root):
+        path = project_root / AOS_DIR_NAME / "agents" / f"{role}.md"
+        text = path.read_text(encoding="utf-8") if path.exists() else (TEMPLATES_DIR / "agents" / f"{role}.md").read_text(encoding="utf-8")
+        tools = next((json.loads(line.split(":", 1)[1]) for line in text.splitlines() if line.startswith("tools_allowed:")), [])
+        if "edit" not in tools and "write" not in tools:
+            read_only.append(f"`{role}`")
+    return [
+        "## Delegación en Antigravity",
+        "Antigravity no carga subagentes en archivo: para asumir un rol, delega con `define_subagent` usando `.aos/agents/<rol>.md` como prompt. "
+        f"Roles sin escritura (`enable_write_tools: false`): {', '.join(read_only) or '(ninguno)'}.",
+        "",
+    ]
 
 
 def build_managed_block(target_file: str, project_root: Path) -> str:
     """Construye el bloque gestionado en Markdown con optimizaciones específicas por herramienta."""
-    today = dt.date.today().isoformat()
     agents = get_available_agents(project_root)
     skills = get_available_skills(project_root)
 
+    from .native import ADAPTERS  # native imports sync: resolve at call time
+
+    generators = ", ".join(f"`{t}`" for t in sorted(ADAPTERS))
     agents_list_str = ", ".join(f"`{a}`" for a in agents) if agents else "(ninguno definido)"
     skills_list_str = ", ".join(f"`{s}`" for s in skills) if skills else "(ninguno definido)"
 
     lines = [
         MANAGED_START,
-        f"# Instrucciones Gestionadas por DASS-AOS (v{VERSION} · generado {today})",
+        f"# Instrucciones Gestionadas por DASS-AOS (v{VERSION})",
         "",
         "> **Raíz del Estado del Proyecto**: `.aos/`",
         "> Todas las reglas, planes activos, contratos, decisiones y trampas (gotchas) se almacenan localmente en `.aos/`.",
@@ -184,11 +173,11 @@ def build_managed_block(target_file: str, project_root: Path) -> str:
         "## Ciclo de Vida Obligatorio del Agente",
         "1. **Inicio de Sesión (Session-Start)**: Ejecutar `aos refresh` (o `python -m dass_aos refresh`) para revisar gotchas recientes y el estado de memoria. Si tu herramienta tiene el hook nativo generado por `adapt-native`, ya se ejecuta solo.",
         "2. **Pre-Tarea (Pre-Task)**: Consultar `.aos/plans/active/` para tomar la siguiente tarea atómica sin marcar. Revisar `.aos/contracts/` y consultar `codebase-memory` antes de modificar código.",
-        "3. **En Tarea (In-Task)**: Trabajar en fases atómicas. Nunca inventar endpoints ni esquemas de eventos que no estén formalmente declarados en `.aos/contracts/`.",
-        "4. **Post-Tarea (Post-Task)**: Ejecutar `aos verify` (linters/tests) y `aos scan` (Semgrep/Checkov). Marcar la tarea completada en el plan con `[x]`.",
+        "3. **En Tarea (In-Task)**: Trabajar en fases atómicas, cada una con su gate. Si el cambio cruza capas o toca más de tres archivos, seguir la skill `phased-delivery`. Nunca inventar endpoints ni esquemas de eventos que no estén formalmente declarados en `.aos/contracts/`.",
+        "4. **Post-Tarea (Post-Task)**: Ejecutar `aos verify` (linters/tests) y `aos scan` (Semgrep/Checkov). Si se tocó UI, API, CLI o escritorio, skill `live-verify`: levantar la app, ejercitarla, mirar la evidencia y corregirse (≤3 rondas). Si se tocó más de un archivo, skill `adversarial-review`: solo se corrige lo que confirme `adversarial-verifier`. Marcar la tarea completada en el plan con `[x]`.",
         "",
-        "## Adaptación Nativa (ADR-004)",
-        "Si no existe `.aos/native/<tu-herramienta>.json` o `aos refresh` lo marca DESACTUALIZADO, ejecuta la skill `adapt-native` (`.aos/skills/specs/adapt-native.md`): genera tus subagentes, skills, hooks y MCP nativos desde `.aos/`.",
+        "## Adaptación Nativa (ADR-004, ADR-005)",
+        f"Si no existe `.aos/native/<tu-herramienta>.json` o `aos refresh` lo marca DESACTUALIZADO: con generador ({generators}) ejecuta `aos adapt-native <tu-herramienta> --yes`; con cualquier otra herramienta, la skill `adapt-native` (`.aos/skills/specs/adapt-native.md`). Generan tus subagentes, skills, hooks y MCP nativos desde `.aos/`.",
         "",
         "## Roles Especializados Disponibles",
         agents_list_str,
@@ -196,6 +185,7 @@ def build_managed_block(target_file: str, project_root: Path) -> str:
         "## Skills y Comandos Principales Disponibles",
         skills_list_str,
         "",
+        *(antigravity_delegation(project_root) if target_file == "GEMINI.md" else []),
         "## Contratos y Codebase Memory",
         "- **Contratos**: Consulta `.aos/contracts/http/`, `.aos/contracts/events/` y `.aos/contracts/schemas/`.",
         "- **Codebase Memory**: Consulta el grafo estructural (`search_graph`/`query_graph`) antes de alterar arquitecturas cruzadas.",
@@ -244,13 +234,13 @@ def build_managed_block(target_file: str, project_root: Path) -> str:
     return "\n".join(lines)
 
 
-def sync_file(file_path: Path, project_root: Path, create_missing: bool = False) -> bool:
+def sync_file(file_path: Path, project_root: Path, create_missing: bool = False) -> Optional[str]:
     """Sincroniza un archivo individual de instrucciones de agente."""
     managed_content = build_managed_block(file_path.name, project_root)
 
     if not file_path.exists():
         if not create_missing:
-            return False
+            return None
         initial_content = (
             f"# {file_path.name} — Instrucciones del Proyecto\n\n"
             f"{managed_content}\n"
@@ -258,7 +248,7 @@ def sync_file(file_path: Path, project_root: Path, create_missing: bool = False)
             "(Añade aquí notas libres, detalles específicos del stack y consejos para desarrolladores — se conservarán intactas en cada sincronización)\n"
         )
         file_path.write_text(initial_content, encoding="utf-8")
-        return True
+        return "CREADO"
 
     text = file_path.read_text(encoding="utf-8")
 
@@ -274,25 +264,83 @@ def sync_file(file_path: Path, project_root: Path, create_missing: bool = False)
     else:
         new_text = managed_content + "\n" + text
 
+    if new_text == text:
+        return "SIN CAMBIOS"
     file_path.write_text(new_text, encoding="utf-8")
-    return True
+    return "ACTUALIZADO"
 
 
-def sync_all_instructions(project_root: Path, create_missing: bool = False) -> Dict[str, str]:
-    """Sincroniza todos los archivos de instrucciones de agentes en el proyecto destino."""
+def read_config(project_root: Path) -> dict:
+    """.aos/config.json as a dict ({} if missing). Raises ValueError naming the file if it is not a JSON object."""
+    path = project_root / AOS_DIR_NAME / "config.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except ValueError as exc:
+        raise ValueError(f"{path} no es JSON válido: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} debe ser un objeto JSON")
+    return data
+
+
+def configured_tools(project_root: Path) -> List[str]:
+    """Tools this project uses (.aos/config.json "tools"); empty for projects created before 0.6.0.
+
+    Lenient on purpose (used by every `aos sync`); `aos init` validates strictly in resolve_tools.
+    """
+    try:
+        tools = read_config(project_root).get("tools")
+    except (ValueError, OSError):
+        return []
+    return [t for t in tools if t in TOOL_FILES] if isinstance(tools, list) else []
+
+
+def _is_sign(path: Path) -> bool:
+    """A file DASS-AOS itself wrote (every tool's file before 0.6.0) says nothing about which tools are used."""
+    if path.is_dir():
+        return True
+    if not path.is_file():
+        return False
+    text = path.read_text(encoding="utf-8", errors="replace")
+    return MANAGED_START not in text and LEGACY_MANAGED_START not in text
+
+
+def detect_tools(project_root: Path) -> List[str]:
+    """Tools already in use in the repo, by their own folders or by instruction files not written by DASS-AOS."""
+    return [tool for tool, signs in TOOL_SIGNS.items() if any(_is_sign(project_root / s) for s in signs)]
+
+
+def sync_all_instructions(project_root: Path) -> Dict[str, str]:
+    """Create the instruction files of the configured tools; keep any other existing one up to date."""
     results = sync_engine_docs(project_root)
     validate_tools_allowed(project_root)
-    target_files = AGENT_FILES + RULE_FILES
+    wanted = {TOOL_FILES[t] for t in configured_tools(project_root)}
 
-    for filename in target_files:
+    for filename in INSTRUCTION_FILES:
         path = project_root / filename
-        existed = path.exists()
-        success = sync_file(path, project_root, create_missing=create_missing)
-        if success:
-            results[filename] = "CREADO" if not existed else "ACTUALIZADO"
-        else:
-            results[filename] = "OMITIDO"
+        if filename in wanted or path.exists():
+            results[filename] = sync_file(path, project_root, create_missing=True) or "OMITIDO"
+
+    from .native.manifest import native_status  # native imports sync: resolve at call time
 
     for tool, state in native_status(project_root).items():
         results[f"{AOS_DIR_NAME}/native/{tool}.json"] = state
+    ensure_gitignore(project_root)
     return results
+
+
+def ensure_gitignore(project_root: Path) -> None:
+    """Native manifests are per developer (ADR-004); live-verify evidence may hold credentials (ADR-006).
+
+    Runs on every sync so projects created before an entry existed get it too. Appends without
+    rewriting, so the file keeps its line endings.
+    """
+    gitignore = project_root / ".gitignore"
+    if not ((project_root / ".git").exists() or gitignore.exists()):
+        return
+    current = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+    missing = [p for p in (".aos/native/", ".playwright-cli/") if p not in current.splitlines()]
+    if missing:
+        with gitignore.open("a", encoding="utf-8", newline="") as fh:
+            fh.write(("\n" if current and not current.endswith("\n") else "") + "\n".join(missing) + "\n")

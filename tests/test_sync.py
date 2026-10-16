@@ -1,4 +1,5 @@
 """Tests for agent instruction synchronization."""
+import json
 import shutil
 import tempfile
 import unittest
@@ -44,15 +45,19 @@ class TestSync(unittest.TestCase):
         sync_file(claude_md, self.temp_dir, create_missing=True)
         first = claude_md.read_text(encoding="utf-8")
         sync_file(claude_md, self.temp_dir)
-        sync_file(claude_md, self.temp_dir)
+        self.assertEqual(sync_file(claude_md, self.temp_dir), "SIN CAMBIOS")
         self.assertEqual(claude_md.read_text(encoding="utf-8"), first)
 
-    def test_sync_all_files(self):
-        results = sync_all_instructions(self.temp_dir, create_missing=True)
-        self.assertIn("CLAUDE.md", results)
-        self.assertIn("AGENTS.md", results)
-        self.assertIn("GEMINI.md", results)
-        self.assertIn(".cursorrules", results)
+    def test_sync_creates_only_configured_tools_and_updates_existing(self):
+        init_project(self.temp_dir, tools=["antigravity"])
+        (self.temp_dir / "GEMINI.md").unlink()
+        (self.temp_dir / ".cursorrules").write_text("mis reglas\n", encoding="utf-8")  # from an older init
+        self.assertEqual(json.loads((self.temp_dir / ".aos" / "config.json").read_text(encoding="utf-8"))["tools"], ["antigravity"])
+        results = sync_all_instructions(self.temp_dir)
+        self.assertEqual(results["GEMINI.md"], "CREADO")
+        self.assertEqual(results[".cursorrules"], "ACTUALIZADO")  # existing ones are kept up to date
+        for name in ("CLAUDE.md", "AGENTS.md", ".windsurfrules"):
+            self.assertFalse((self.temp_dir / name).exists(), name)
 
 
 class TestEngineDocs(unittest.TestCase):
@@ -60,7 +65,7 @@ class TestEngineDocs(unittest.TestCase):
 
     def setUp(self):
         self.temp_dir = Path(tempfile.mkdtemp())
-        init_project(self.temp_dir, project_name="demo")
+        init_project(self.temp_dir, project_name="demo", tools=["claude-code", "antigravity"])
         self.agents = self.temp_dir / ".aos" / "agents"
 
     def tearDown(self):
@@ -103,7 +108,7 @@ class TestEngineDocs(unittest.TestCase):
         self.assertIn("db-migration-check", claude.read_text(encoding="utf-8"))
 
     def test_unknown_tools_allowed_value_fails_sync(self):
-        init_project(self.temp_dir)
+        init_project(self.temp_dir, tools=["claude-code", "antigravity"])
         role = self.temp_dir / ".aos" / "agents" / "custom.md"
         role.write_text('---\ntools_allowed: ["read", "read_file", "mcp:nope", "shell:npm"]\n---\n', encoding="utf-8")
         with self.assertRaises(ValueError) as ctx:
@@ -114,10 +119,16 @@ class TestEngineDocs(unittest.TestCase):
         self.assertNotIn("shell:npm'", msg)
 
     def test_managed_block_orders_adapt_native(self):
-        init_project(self.temp_dir)
-        text = (self.temp_dir / "AGENTS.md").read_text(encoding="utf-8")
+        init_project(self.temp_dir, tools=["claude-code", "antigravity"])
+        text = (self.temp_dir / "GEMINI.md").read_text(encoding="utf-8")
         self.assertIn(".aos/native/<tu-herramienta>.json", text)
         self.assertIn("`adapt-native`", text)
+
+    def test_managed_block_points_to_delivery_flow(self):
+        init_project(self.temp_dir, tools=["claude-code", "antigravity"])
+        text = (self.temp_dir / "CLAUDE.md").read_text(encoding="utf-8")
+        for name in ("`phased-delivery`", "`live-verify`", "`adversarial-review`", "`adversarial-verifier`"):
+            self.assertIn(name, text)
 
     def test_engine_docs_have_name_and_description(self):
         # Tools use `description` to decide when to delegate (adapt-native)

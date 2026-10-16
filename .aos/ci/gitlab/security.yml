@@ -1,0 +1,21 @@
+# DASS-AOS · Security pipeline (GitLab CI)
+# Include or copy into .gitlab-ci.yml
+
+stages:
+  - security
+
+semgrep:
+  stage: security
+  image: returntocorp/semgrep
+  script:
+    - semgrep --config auto --config p/security-audit --error --quiet .
+  allow_failure: false
+
+checkov:
+  stage: security
+  image: python:3.12-slim
+  before_script:
+    - pip install checkov
+  script:
+    - checkov -d . --quiet --compact
+  allow_failure: true   # set to false when ready to enforce

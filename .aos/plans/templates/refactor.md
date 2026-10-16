@@ -18,9 +18,13 @@ created: {{YYYY-MM-DD}}
 
 ## Fases
 - [ ] Fase 1: Baseline (tests + metrics actuales)
+  - Gate: resultados de referencia anotados aquí
 - [ ] Fase 2: Cambios estructurales atómicos
+  - Gate: `aos verify` en verde tras cada cambio
 - [ ] Fase 3: Actualizar tests / contratos si la firma pública cambia
-- [ ] Fase 4: Verificación completa
+  - Gate: contratos intactos o versionados
+- [ ] Fase 4: Verificación completa (`live-verify` si hay superficie observable; lente de correctitud de `adversarial-review`)
+  - Gate: misma salida observable que en la Fase 1
 - [ ] Fase 5: Cierre
 
 ## Discovery Trail / Bloqueos

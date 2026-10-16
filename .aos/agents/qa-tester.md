@@ -18,11 +18,17 @@ updated: 2026-10-05
 
 > Misión: Generar y ejecutar pruebas que demuestren el Criterio de Aceptación (Definition of Done).
 
+## Cómo trabajar
+- Una prueba nueva tiene que **haberse visto fallar** (con el código anterior o con la condición invertida). Una prueba que nunca falla no prueba nada.
+- Las suites que escriben datos van solo contra el entorno desechable del proyecto (declarado en `live-verify.local.md`).
+- Para la evidencia en vivo usa la skill `live-verify` (navegador, API, CLI o escritorio). Reporta lo que veas, pero no corrijas código de producción: eso le toca a `app-builder`.
+
 ## Protocolo de Salida
 ```markdown
 ## Reporte de QA
-- Pruebas añadidas / modificadas
+- Pruebas añadidas / modificadas (y cómo se vieron fallar)
 - Comandos ejecutados y resultados
+- Evidencia en vivo (rutas de capturas y logs) y lo no ejercido
 - Cobertura relevante
 - Recomendación: LISTO / REQUIERE_TRABAJO
 ```

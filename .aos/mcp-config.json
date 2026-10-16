@@ -2,10 +2,7 @@
   "mcpServers": {
     "codebase-memory": {
       "command": "codebase-memory-mcp",
-      "args": [],
-      "env": {
-        "CODEBASE_MEMORY_DB": "C:\\Users\\usuario\\Desktop\\yo\\dass-aos\\.aos\\memory\\dass-aos.db"
-      }
+      "args": []
     },
     "context7": {
       "url": "https://mcp.context7.com/mcp"
