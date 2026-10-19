@@ -2,6 +2,7 @@
 id: 202610061600
 type: skill-spec
 status: evergreen
+cost: on-demand
 name: "adapt-native"
 description: "Traduce .aos/ (roles, skills, hooks, MCP, tools_allowed) a los formatos nativos de la herramienta de IA en uso, verificando su documentación actual."
 runtime: agent

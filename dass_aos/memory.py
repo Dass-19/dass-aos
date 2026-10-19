@@ -7,6 +7,7 @@ from typing import List, Optional, Tuple
 
 from .constants import AOS_DIR_NAME, configure_utf8_output
 from .scanners import check_tool_installed, checkov_applies
+from .specs import open_specs
 from .native.manifest import native_status
 
 # live-verify's web path (ADR-006) needs playwright-cli only when there is a web frontend
@@ -47,6 +48,27 @@ def list_recent_gotchas(project_root: Path, limit: int = 5) -> List[Tuple[str, P
         results.append((title, g, mtime))
 
     return results
+
+
+def list_recent_lessons(project_root: Path, limit: int = 3) -> List[str]:
+    """Most recent rows of `.aos/knowledge/lessons/LEDGER.md` (newest first, as written)."""
+    ledger = project_root / AOS_DIR_NAME / "knowledge" / "lessons" / "LEDGER.md"
+    if not ledger.exists():
+        return []
+    lessons: List[str] = []
+    try:
+        for line in ledger.read_text(encoding="utf-8").splitlines():
+            if not line.startswith("|") or line.startswith("|-") or line.startswith("| Fecha"):
+                continue
+            cells = [c.strip() for c in line.strip("|").split("|")]
+            if len(cells) < 4 or not any(cells):
+                continue
+            if cells[1].lstrip("`").startswith("<"):  # template placeholder row
+                continue
+            lessons.append(f"**{cells[0]}** · {cells[1]} → {cells[3]} (evidencia: {cells[2]})")
+    except OSError:
+        return []
+    return lessons[:limit]
 
 
 def get_active_plan_info(project_root: Path) -> Optional[Tuple[str, str]]:
@@ -135,7 +157,22 @@ def run_memory_refresh(project_root: Path, gotchas_limit: int = 5) -> str:
 
     lines.extend([
         "",
-        "## 3. Plan Activo y Siguiente Tarea",
+        "## 3. Especificaciones Abiertas (PRD / TRD)",
+    ])
+
+    specs = open_specs(project_root)
+    if not specs:
+        lines.append("- Ninguna. Crea una con `aos spec new prd --title <titulo>` antes de escribir contratos (ADR-007).")
+    else:
+        for spec in specs:
+            missing = "" if spec.has_counterpart else " · **falta su pareja**"
+            lines.append(f"- **{spec.kind.upper()}** {spec.title} (`{spec.path.name}`, {spec.status}){missing}")
+        if any(not s.has_counterpart for s in specs):
+            lines.append("- La pareja se crea con el mismo título: `aos spec new prd|trd --title \"<titulo>\"` (reutiliza el NNN).")
+
+    lines.extend([
+        "",
+        "## 4. Plan Activo y Siguiente Tarea",
     ])
 
     plan_info = get_active_plan_info(project_root)
@@ -149,7 +186,7 @@ def run_memory_refresh(project_root: Path, gotchas_limit: int = 5) -> str:
 
     lines.extend([
         "",
-        "## 4. Adaptación Nativa (adapt-native)",
+        "## 5. Adaptación Nativa (adapt-native)",
     ])
     status = native_status(project_root)
     if status:
@@ -157,7 +194,17 @@ def run_memory_refresh(project_root: Path, gotchas_limit: int = 5) -> str:
     else:
         lines.append("- Ninguna herramienta adaptada aún: `aos adapt-native claude-code --yes` / `aos adapt-native antigravity --yes`, o la skill `adapt-native` en otras herramientas.")
 
-    lines.extend(["", "## 5. Dependencias Externas"])
+    lines.extend([
+        "",
+        "## 6. Lecciones Recientes",
+    ])
+    lessons = list_recent_lessons(project_root)
+    if lessons:
+        lines.extend(f"- {lesson}" for lesson in lessons)
+    else:
+        lines.append("- Ninguna. Las lecciones con evidencia se anotan en `.aos/knowledge/lessons/LEDGER.md` al cerrar una fase.")
+
+    lines.extend(["", "## 7. Dependencias Externas"])
     missing = missing_dependencies(project_root)
     if missing:
         lines.extend(f"- Falta `{name}`: {hint}" for name, hint in missing)

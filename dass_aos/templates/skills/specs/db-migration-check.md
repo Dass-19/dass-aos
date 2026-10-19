@@ -2,6 +2,7 @@
 id: 202610031418
 type: skill-spec
 status: evergreen
+cost: on-demand
 name: "db-migration-check"
 description: "Valida que las migraciones de base de datos sean atómicas, reversibles y seguras con el comando de .aos/config.json."
 runtime: python

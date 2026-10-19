@@ -2,6 +2,7 @@
 id: 202610031415
 type: skill-spec
 status: evergreen
+cost: on-demand
 name: "bootstrap-project"
 description: "Inicializa DASS-AOS en un repositorio (aos init): estructura .aos/ e instrucciones de agentes sincronizadas."
 runtime: python

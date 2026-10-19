@@ -1,10 +1,27 @@
 {
   "project_name": "dass-aos",
-  "aos_version": "0.6.0",
+  "aos_version": "0.7.0",
   "lint_command": "ruff check .",
   "test_command": "python -m unittest discover -s tests -p \"test_*.py\"",
   "migration_command": null,
   "client_generator": "generic",
+  "deny_paths": [
+    ".env",
+    ".env.*",
+    "*.pem",
+    "*.key",
+    "*.p12",
+    "*.pfx",
+    "*.kdbx",
+    "id_rsa",
+    "id_ed25519",
+    "*.ppk",
+    ".ssh/",
+    ".aws/",
+    ".gnupg/",
+    ".kube/",
+    ".docker/"
+  ],
   "tools": [
     "claude-code",
     "antigravity"

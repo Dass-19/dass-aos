@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
+from ..backup import Snapshots
 from ..sync import validate_tools_allowed
 from . import files, sources
 from .manifest import manifest_path, native_source_hash, read_manifest
@@ -95,6 +96,7 @@ class NativeAdapter:
     def run(self, dry_run: bool = False, yes: bool = False) -> List[str]:
         """Generate everything; returns the changes made (empty = already up to date)."""
         validate_tools_allowed(self.root)  # same check as `aos sync`: never translate an unknown value silently
+        snapshots = None if dry_run else Snapshots(self.root)
         changes: List[str] = []
         old = read_manifest(self.root, self.TOOL)
 
@@ -108,7 +110,7 @@ class NativeAdapter:
             if path.exists() and not files.is_generated(path):
                 self.warnings.append(f"OMITIDO, archivo sin marcador (no se toca): {rel}")
                 continue
-            result = files.write_text(path, text, dry_run)
+            result = files.write_text(path, text, dry_run, snapshots)
             if result:
                 changes.append(f"{result}: {rel}")
             written.append(rel)
@@ -136,7 +138,7 @@ class NativeAdapter:
         for m in self.hooks():
             entry = f"{m.path}#{m.label}"
             try:
-                result = files.merge_json(self.root / m.path, m.keypath, m.value, m.owns, dry_run or not yes)
+                result = files.merge_json(self.root / m.path, m.keypath, m.value, m.owns, dry_run or not yes, snapshots)
             except files.UnreadableJson:
                 self.warnings.append(f"OMITIDO, JSON ilegible (no se toca): {m.path}")
                 continue

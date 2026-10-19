@@ -2,6 +2,7 @@
 id: 202610031411
 type: skill-spec
 status: evergreen
+cost: on-demand
 name: "checkov-scan"
 description: "Escanea IaC, contenedores y pipelines con Checkov; soporta --dry-run."
 runtime: python

@@ -64,6 +64,7 @@ test-client/
 .agents/skills/memory-refresh/SKILL.md
 .agents/skills/phased-delivery/SKILL.md
 .agents/skills/semgrep-scan/SKILL.md
+.agents/skills/spec-driven/SKILL.md
 .agents/skills/sync-agent-instructions/SKILL.md
 # <<< DASS-AOS adapt-native: antigravity <<<
 
@@ -85,6 +86,8 @@ test-client/
 .claude/skills/memory-refresh/SKILL.md
 .claude/skills/phased-delivery/SKILL.md
 .claude/skills/semgrep-scan/SKILL.md
+.claude/skills/spec-driven/SKILL.md
 .claude/skills/sync-agent-instructions/SKILL.md
 # <<< DASS-AOS adapt-native: claude-code <<<
 .playwright-cli/
+.aos/.backups/

@@ -38,9 +38,13 @@ class TestNative(unittest.TestCase):
         gitignore = self.root / ".gitignore"
         gitignore.write_bytes(b"node_modules/\n.aos/native/")
         sync_all_instructions(self.root)
-        self.assertEqual(gitignore.read_bytes(), b"node_modules/\n.aos/native/\n.playwright-cli/\n")
+        self.assertEqual(
+            gitignore.read_bytes(), b"node_modules/\n.aos/native/\n.aos/.backups/\n.playwright-cli/\n"
+        )
         sync_all_instructions(self.root)
-        self.assertEqual(gitignore.read_bytes(), b"node_modules/\n.aos/native/\n.playwright-cli/\n")
+        self.assertEqual(
+            gitignore.read_bytes(), b"node_modules/\n.aos/native/\n.aos/.backups/\n.playwright-cli/\n"
+        )
 
     def test_fresh_manifest_is_up_to_date(self):
         self.write_manifest(native_source_hash(self.root))

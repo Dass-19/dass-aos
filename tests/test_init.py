@@ -146,11 +146,13 @@ class TestBootstrap(unittest.TestCase):
         self.assertEqual(names("skills/specs"), {
             "adapt-native", "adversarial-review", "api-smoke-test", "bootstrap-project", "checkov-scan",
             "db-migration-check", "generate-client", "git-atomic-commit", "live-verify", "memory-refresh",
-            "phased-delivery", "semgrep-scan", "sync-agent-instructions",
+            "phased-delivery", "semgrep-scan", "spec-driven", "sync-agent-instructions",
         })
         self.assertEqual(names("plans/templates"), {"bugfix", "feature", "refactor", "security"})
         self.assertEqual(names("hooks"), {"session-start", "pre-task", "post-task"})
         self.assertEqual(names("knowledge"), {"backend", "frontend", "security"})
+        self.assertEqual(names("specs"), {"README"})
+        self.assertEqual(names("specs/templates"), {"prd", "trd"})
 
     def test_init_git_hook_does_not_need_aos_py(self):
         (self.temp_dir / ".git" / "hooks").mkdir(parents=True)

@@ -2,6 +2,7 @@
 id: 202610161404
 type: skill-spec
 status: evergreen
+cost: on-demand
 name: "live-verify"
 description: "Verificación en vivo: levantar la app, ejercitar lo que se cambió (navegador con playwright-cli, API con curl, CLI con el comando real o escritorio), mirar la evidencia (capturas, consola, red, salida) y corregir hasta 3 rondas. Úsala al cerrar cualquier fase que toque UI, API, CLI o una app de escritorio, y para reproducir un bug antes de arreglarlo."
 runtime: agent

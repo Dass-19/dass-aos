@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 from typing import List, Optional
 
-from .constants import AOS_DIR_NAME, TEMPLATES_DIR, TOOL_FILES, VERSION
+from .constants import AOS_DIR_NAME, DEFAULT_DENY_PATHS, TEMPLATES_DIR, TOOL_FILES, VERSION
 from .sync import detect_tools, read_config, sync_all_instructions
 from .verifier import detect_stack_commands
 
@@ -69,7 +69,7 @@ def init_project(
     aos_dir = project_root / AOS_DIR_NAME
 
     # 1. Empty state directories the templates don't provide
-    for sub in ["plans/active", "plans/archive"]:
+    for sub in ["plans/active", "plans/archive", "specs"]:
         (aos_dir / sub).mkdir(parents=True, exist_ok=True)
 
     # 2. Templates (layout mirrors .aos/)
@@ -83,6 +83,8 @@ def init_project(
             "aos_version": VERSION,
             **detect_stack_commands(project_root),
             "client_generator": "generic",
+            # Paths the pre-commit hook refuses to commit; doctor warns when the key is missing (ADR-008)
+            "deny_paths": DEFAULT_DENY_PATHS,
         }
         config_file.write_text(json.dumps(config_data, indent=2), encoding="utf-8")
     config_data = read_config(project_root)

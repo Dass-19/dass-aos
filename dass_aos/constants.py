@@ -4,7 +4,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 
 # Managed block markers
 MANAGED_START = "<!-- DASS-AOS-MANAGED-START -->"
@@ -42,6 +42,13 @@ RULE_FILES = [".cursorrules", ".windsurfrules"]
 
 # Default project state directory name
 AOS_DIR_NAME = ".aos"
+
+# Paths the pre-commit hook refuses to commit unless explicitly forced (ADR-008).
+# Glob patterns matched against the repo-relative path of each staged file.
+DEFAULT_DENY_PATHS = [
+    ".env", ".env.*", "*.pem", "*.key", "*.p12", "*.pfx", "*.kdbx",
+    "id_rsa", "id_ed25519", "*.ppk", ".ssh/", ".aws/", ".gnupg/", ".kube/", ".docker/",
+]
 
 # Templates shipped inside the package; layout mirrors .aos/
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"

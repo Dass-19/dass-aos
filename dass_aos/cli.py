@@ -8,9 +8,12 @@ from pathlib import Path
 from .bootstrap import init_project
 from .constants import TOOL_FILES, VERSION, configure_utf8_output
 from .generator import generate_client
+from .doctor import run_doctor
 from .memory import run_memory_refresh
 from .plans import create_new_plan
 from .scanners import run_security_scans
+from .specs import SPEC_KINDS, create_new_spec
+from .status import run_status
 from .native import ADAPTERS, get_adapter
 from .native.antigravity import refresh_hook
 from .native.manifest import native_source_hash
@@ -97,6 +100,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     plan_new_p.add_argument("--title", required=True, help="Short descriptive title of the task")
     plan_new_p.add_argument("--project-root", default=".", help="Project root directory")
+
+    # 8. spec
+    spec_p = subparsers.add_parser("spec", help="Manage product/technical requirement documents (PRD/TRD)")
+    spec_subparsers = spec_p.add_subparsers(dest="spec_command", required=True)
+    spec_new_p = spec_subparsers.add_parser("new", help="Create a new PRD or TRD from template")
+    spec_new_p.add_argument("kind", choices=list(SPEC_KINDS), help="prd (what/why) or trd (how)")
+    spec_new_p.add_argument("--title", required=True, help="Feature title; the TRD reuses the PRD number")
+    spec_new_p.add_argument("--project-root", default=".", help="Project root directory")
+
+    # 9. doctor
+    doctor_p = subparsers.add_parser("doctor", help="Read-only audit of the agent harness loaded from .aos/ (ADR-008)")
+    doctor_p.add_argument("--project-root", default=".", help="Project root directory")
+    doctor_p.add_argument("--strict", action="store_true", help="Exit 1 when there are error-level findings")
+
+    # 10. status
+    status_p = subparsers.add_parser("status", help="State of the work derived from files: Working/Checking/Ready/Needs decision")
+    status_p.add_argument("--project-root", default=".", help="Project root directory")
+    status_p.add_argument("--json", action="store_true", help="Machine-readable output")
 
     return parser
 
@@ -186,6 +207,20 @@ def main(argv: list[str] | None = None) -> int:
                 root = Path(args.project_root).resolve()
                 create_new_plan(root, template_type=args.template, title=args.title)
                 return 0
+
+        elif args.command == "spec":
+            if args.spec_command == "new":
+                root = Path(args.project_root).resolve()
+                create_new_spec(root, kind=args.kind, title=args.title)
+                return 0
+
+        elif args.command == "doctor":
+            root = Path(args.project_root).resolve()
+            return run_doctor(root, strict=args.strict)
+
+        elif args.command == "status":
+            root = Path(args.project_root).resolve()
+            return run_status(root, as_json=args.json)
 
     except Exception as exc:
         print(f"[aos ERROR]: {exc}", file=sys.stderr)

@@ -16,6 +16,7 @@ created: {{YYYY-MM-DD}}
 - Reproducción:
 - Archivos sospechosos: []
 - Gotchas relacionados: []
+- PRD/TRD (solo si el fix cambia el contrato con el usuario): []
 
 ## Fases
 - [ ] Fase 1: Reproducir y aislar (en vivo con `live-verify` si es UI, API o CLI)

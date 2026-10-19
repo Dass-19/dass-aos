@@ -15,6 +15,7 @@ created: {{YYYY-MM-DD}}
 - Motivación (deuda, legibilidad, rendimiento…):
 - Archivos previstos: []
 - ADRs vinculados: []
+- PRD/TRD: normalmente **no aplica** (el comportamiento observable no cambia); si cambia el contrato con el usuario, aplícalos.
 
 ## Fases
 - [ ] Fase 1: Baseline (tests + metrics actuales)

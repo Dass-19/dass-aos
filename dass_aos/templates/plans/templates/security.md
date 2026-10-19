@@ -15,6 +15,7 @@ created: {{YYYY-MM-DD}}
 - Riesgo / CVE / hallazgo:
 - Superficie afectada: []
 - ADRs de excepción (si aplica): []
+- PRD/TRD: **no aplica**; la mitigación y su justificación van en este plan y en el ADR de excepción.
 
 ## Fases
 - [ ] Fase 1: Reproducir / confirmar el hallazgo (Semgrep, Checkov, manual, `live-verify` contra el entorno desechable)

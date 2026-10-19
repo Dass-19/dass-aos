@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:  # avoids importing the backup module at runtime just for a type hint
+    from ..backup import Snapshots
 
 MARKER = "DASS-AOS-GENERATED"
 
@@ -16,18 +19,27 @@ def is_generated(path: Path) -> bool:
     return path.exists() and MARKER in path.read_text(encoding="utf-8")
 
 
-def write_text(path: Path, text: str, dry_run: bool) -> Optional[str]:
+def write_text(path: Path, text: str, dry_run: bool, snapshots: Optional["Snapshots"] = None) -> Optional[str]:
     """Write LF text if it changed. Returns 'creado' / 'actualizado' / None (no change)."""
     old = path.read_text(encoding="utf-8").replace("\r\n", "\n") if path.exists() else None
     if old == text:
         return None
     if not dry_run:
+        if snapshots:
+            snapshots.snapshot(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(text.encode("utf-8"))
     return "creado" if old is None else "actualizado"
 
 
-def merge_json(path: Path, keypath: List[str], value: Any, owns: Optional[Callable[[Any], bool]], dry_run: bool) -> Optional[str]:
+def merge_json(
+    path: Path,
+    keypath: List[str],
+    value: Any,
+    owns: Optional[Callable[[Any], bool]],
+    dry_run: bool,
+    snapshots: Optional["Snapshots"] = None,
+) -> Optional[str]:
     """Set data[keypath] = value keeping everything else.
 
     With `owns`, the target is a list: replace the items `owns` matches (ours) with `value`'s, keep the rest.
@@ -54,6 +66,8 @@ def merge_json(path: Path, keypath: List[str], value: Any, owns: Optional[Callab
         return None
     node[last] = new
     if not dry_run:
+        if snapshots:
+            snapshots.snapshot(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes((json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
     return "fusionado"

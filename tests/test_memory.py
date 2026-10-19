@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 from dass_aos.constants import AOS_DIR_NAME
-from dass_aos.memory import list_recent_gotchas, missing_dependencies, run_memory_refresh
+from dass_aos.memory import list_recent_gotchas, list_recent_lessons, missing_dependencies, run_memory_refresh
 
 
 class TestMemory(unittest.TestCase):
@@ -17,6 +17,22 @@ class TestMemory(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_lessons_ledger_skips_header_and_placeholders(self):
+        lessons_dir = self.temp_dir / AOS_DIR_NAME / "knowledge" / "lessons"
+        lessons_dir.mkdir(parents=True, exist_ok=True)
+        (lessons_dir / "LEDGER.md").write_text(
+            "| Fecha | Artefacto tocado | Evidencia | Efecto |\n"
+            "|---|---|---|---|\n"
+            "| 2026-01-01 | `<artefacto>` | `<comando>` | `<efecto>` |\n"
+            "| 2026-10-19 | `dass_aos/doctor.py` | `aos doctor` (0 errores) | Un check honesto no genera ruido |\n",
+            encoding="utf-8",
+        )
+        lessons = list_recent_lessons(self.temp_dir)
+        self.assertEqual(len(lessons), 1)
+        self.assertIn("dass_aos/doctor.py", lessons[0])
+        self.assertIn("Un check honesto", lessons[0])
+        self.assertNotIn("<artefacto>", lessons[0])
 
     def test_gotchas_extraction_and_utf8(self):
         # Create a gotcha with utf-8 / accents and arrows

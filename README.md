@@ -104,22 +104,47 @@ Los roles y skills del motor son genéricos a propósito. Cada proyecto los adap
 
 - Los `.aos/agents/*.md` y `.aos/skills/specs/*.md` del motor llevan el marcador `<!-- DASS-AOS-GENERATED`: **no los edites**. Si `sync` encuentra uno editado a mano, no lo sobreescribe y te indica que muevas los cambios al `.local.md`.
 - Una skill puede declarar `applies_when: ["glob", ...]` en su frontmatter: solo se lista en las instrucciones si algún glob encuentra archivos en el proyecto (p. ej. `db-migration-check` solo aparece si hay `migrations/`, `alembic.ini`, `prisma/schema.prisma`…).
+- Toda skill declara `cost:` (`on-demand`, `always-on`, `enforced` o `delegated`). **La prosa siempre activa es el bloque gestionado** de `CLAUDE.md`/`AGENTS.md`, y es lo caro: si crece, `aos doctor` avisa y propone mover detalle a una skill.
 
-## 5.0 Flujo de entrega: fases, verificación en vivo y revisión adversarial
+## 5.0 Requisitos: PRD → TRD → contratos → plan
 
-Tres skills del motor ([ADR-006](.aos/decisions/ADR-006-flujo-de-entrega-del-motor.md)), sacadas de proyectos reales:
+El *qué* y el *por qué* no viven ya en el mensaje original ni se reconstruyen leyendo el diff ([ADR-007](.aos/decisions/ADR-007-capa-de-requisitos-y-grafo-de-codigo.md)). Viven en `.aos/specs/`:
+
+| Documento | Responde a | Lo revisa |
+|---|---|---|
+| `NNN-<slug>.prd.md` | **PRD** — qué problema, para quién, y **cómo sabemos que funcionó** (criterios de aceptación medibles) | negocio / producto |
+| `NNN-<slug>.trd.md` | **TRD** — cómo se construye y por qué así; contratos afectados, datos, riesgos, plan de prueba y observabilidad | ingeniería |
+
+```bash
+aos spec new prd --title "Export de facturas"   # → .aos/specs/001-export-de-facturas.prd.md
+aos spec new trd --title "Export de facturas"   # → .aos/specs/001-export-de-facturas.trd.md (mismo NNN)
+```
+
+- El PRD y el TRD **comparten el número** con el `.design.md` de la misma funcionalidad.
+- **La spec se cita, nunca se parafrasea**: los handoffs a subagentes y el `.design.md` apuntan a la ruta y a la sección. Reformular el requisito con otras palabras es un defecto.
+- **Vía corta:** un cambio pequeño y comprendido no necesita PRD. Sin criterios de aceptación medibles, no se pasa al TRD.
+- El PRD y el TRD **sobreviven al plan**: cuando el plan se archiva, la spec se queda.
+
+## 5.1 Flujo de entrega por riesgo: requisitos, fases, verificación en vivo y revisión con recibo
+
+Cuatro skills del motor ([ADR-006](.aos/decisions/ADR-006-flujo-de-entrega-del-motor.md), [ADR-008](.aos/decisions/ADR-008-enrutado-por-riesgo-y-revision-con-recibo.md)), sacadas de proyectos reales:
 
 | Skill | Cuándo | Qué hace |
 |---|---|---|
-| `phased-delivery` | Cambios que cruzan capas o tocan más de tres archivos | Línea base → exploración → decisiones del usuario → plan con un `Gate:` por fase → implementación en orden de dependencias → `live-verify` → `adversarial-review` → cierre documentado |
+| `spec-driven` | Funcionalidad con alcance de producto | PRD con criterios medibles → TRD que cita el PRD → contratos → plan que enlaza ambos. Vía corta si el cambio es pequeño |
+| `phased-delivery` | Cambios con **riesgo nombrado** (datos, seguridad, contratos compartidos, concurrencia, entrega) o poco comprendidos | Línea base → exploración → requisitos y decisiones → plan con un `Gate:` por fase → implementación en orden de dependencias → `live-verify` → revisión con recibo → cierre documentado |
 | `live-verify` | Al cerrar una fase que toca UI, API, CLI o escritorio | Quien implementa levanta la app en un entorno desechable, la ejercita (navegador con `playwright-cli`, `curl`, el comando real o scripts de escritorio), mira la evidencia y se corrige, hasta 3 rondas |
-| `adversarial-review` | Cambios de más de un archivo | Un revisor (`reviewer`) por lente → un `adversarial-verifier` intenta refutar cada hallazgo (en caso de duda, falso) → un solo agente corrige lo confirmado, con una comprobación vista fallar |
+| `adversarial-review` | Cambios con riesgo nombrado, antes de dar una fase por cerrada | Congela el candidato (hash) → tier por riesgo (0 lentes / 1 lente / 4R) → un revisor por lente → un `adversarial-verifier` intenta refutar cada hallazgo (en caso de duda, falso) → **una sola corrección acotada** → acuse |
+
+**El tamaño se decide por riesgo y comprensión, nunca por número de archivos.** Un bug de tres líneas en una migración es grande; un renombrado en veinte archivos de texto es pequeño. Y sin un **motivo de delegación** que se pueda nombrar (exploración, escritores en paralelo, backstop de contexto, verificador independiente), el agente trabaja inline, sin subagentes.
 
 Lo propio de cada proyecto va en el `.local.md` de cada skill: lentes y qué buscar, gates con comandos exactos, cómo levantar la app y los anchos de pantalla. **El entorno desechable se declara solo en `live-verify.local.md`.** La evidencia web queda en `.playwright-cli/`, que `aos init` y `aos sync` añaden a `.gitignore`.
 
 **Proyectos con versiones propias** (p. ej. una `adversarial-review.md` hecha a mano): `aos sync` las omite con "OMITIDO: editado a mano". Mueve lo propio del proyecto a `<skill>.local.md`, borra el archivo y vuelve a ejecutar `aos sync`. Los hooks (`.aos/hooks/*.md`) y las plantillas de plan son del proyecto y `sync` no los toca: para recibir la versión nueva, bórralos y ejecuta `aos init`.
 
-## 5.1 Integración nativa con tu herramienta (`aos adapt-native`)
+**Proyectos anteriores a 0.7.0:** para recibir la capa de requisitos y el flujo por riesgo, borra `.aos/hooks/*.md`, `.aos/plans/templates/*.md` y ejecuta `aos init`, después `aos sync` (`spec-driven` y las skills reescritas llegan solas por `sync`; `.aos/specs/` y `.aos/knowledge/lessons/` se crean al inicializar). `.aos/config.json` gana `deny_paths`: si falta, `aos doctor` avisa y el pre-commit no bloquea secretos.
+
+## 5.2 Integración nativa con tu herramienta (`aos adapt-native`)
 
 `.aos/` es la fuente única. Cada herramienta de IA necesita sus propios formatos (subagentes, skills, hooks), que se generan desde `.aos/` y **no se commitean**: cada dev los genera en su máquina.
 
@@ -142,6 +167,19 @@ aos adapt-native claude-code --yes      # o: antigravity. --dry-run muestra los 
 
 **Manifiesto y desincronización:** lo hecho queda en `.aos/native/<herramienta>.json` (ignorado en git), con `enforcement` (qué es nativo y qué convención) y `source_hash`. Si cambias roles, skills, hooks o MCP en `.aos/`, `aos refresh` y `aos sync` marcan **DESACTUALIZADO** e indican el comando que hay que volver a ejecutar.
 
+## 5.3 Auditoría del harness (`aos doctor` y `aos status`)
+
+```bash
+aos doctor            # solo diagnóstico: no escribe nada y no bloquea commits
+aos doctor --strict   # sale con 1 si hay hallazgos de nivel error
+aos status            # Working | Checking | Ready | Needs decision
+aos status --json     # lo mismo, para scripts y hooks
+```
+
+`aos doctor` responde a una sola pregunta: **¿lo que el agente carga coincide con lo que `.aos/` declara?** Comprueba el frontmatter de skills y roles (`name` que coincide con el archivo, `description`, `cost`), skills que no se listan, `.local.md` huérfanos, el tamaño del bloque siempre activo (~tokens), `tools_allowed` contra el vocabulario de ADR-004, nativos desactualizados, PRD sin TRD, `deny_paths` ausente y dependencias externas. **Ningún hook lo ejecuta**: es diagnóstico.
+
+`aos status` deriva el estado de los archivos, no del criterio de un modelo: pregunta registrada sin respuesta o siguiente fase de requisitos → `Needs decision`; siguiente fase de implementación → `Working`; de verificación → `Checking`; sin fases pendientes (o sin plan activo) → `Ready`.
+
 ---
 
 ## 6. Estructura
@@ -159,24 +197,33 @@ dass-aos/ (motor)
 │   ├── verifier.py            aos verify (lint / test / migración, detección de stack)
 │   ├── generator.py           aos generate-client
 │   ├── plans.py               aos plan new
+│   ├── specs.py               aos spec new (PRD/TRD)
+│   ├── doctor.py              aos doctor (auditoría del harness, solo lectura)
+│   ├── status.py              aos status (estado derivado de archivos)
+│   ├── backup.py              snapshot antes de reescribir un archivo
 │   └── templates/             Todo lo que `aos init` copia a .aos/ (misma estructura)
-├── docs/ARCHITECTURE.md
+├── docs/
+│   ├── ARCHITECTURE.md
+│   └── CODE-GRAPH-OPTIONS.md  codebase-memory vs CodeGraph (decisión y cuándo revisarla)
 └── tests/
 ```
 
 ```
 mi-proyecto/
 ├── .aos/
-│   ├── config.json            Comandos de verificación
+│   ├── config.json            Comandos de verificación + deny_paths del pre-commit
 │   ├── mcp-config.json        Servidores MCP neutrales (codebase-memory, context7)
 │   ├── native/                Manifiestos de adapt-native (por dev, fuera de git)
+│   ├── .backups/              Snapshots de lo que el motor reescribió (fuera de git)
 │   ├── agents/                Roles (generados + *.local.md del proyecto)
 │   ├── skills/specs/          Skills (generadas + *.local.md del proyecto)
 │   ├── skills/bin/            Utilidades standalone (smoke test, commit atómico)
 │   ├── hooks/                 Especificaciones de lifecycle + pre_commit.py
 │   ├── contracts/             OpenAPI 3.x y CloudEvents schemas
+│   ├── specs/                 PRD y TRD (NNN-<slug>.prd.md / .trd.md)
 │   ├── plans/{active,archive,templates}/
 │   ├── knowledge/gotchas/     Trampas y aprendizajes no obvios
+│   ├── knowledge/lessons/     LEDGER.md: lecciones con evidencia
 │   ├── decisions/             ADRs del proyecto
 │   ├── ci/                    Pipelines de seguridad listos para copiar
 ├── CLAUDE.md, AGENTS.md, GEMINI.md, .cursorrules, .windsurfrules
@@ -191,6 +238,9 @@ mi-proyecto/
 | `aos init [<herramienta>...] [--project-root <ruta>]` | Inicializa `.aos/` para las herramientas indicadas (o detectadas): su archivo de instrucciones y, si tienen generador, sus nativos. Repetirlo con otra herramienta la añade. | Desarrollador |
 | `aos refresh [--gotchas-limit <N>]` | Extrae gotchas recientes, codebase-memory graph status y active task. | Agente (Session-Start) |
 | `aos plan new <tipo> --title <título>` | Genera un plan activo a partir de template (`feature`, `bugfix`, `refactor`, `security`). | Agente (Pre-Task) |
+| `aos spec new prd\|trd --title <título>` | Crea `.aos/specs/NNN-<slug>.{prd,trd}.md`; el TRD reutiliza el número del PRD con el mismo título. | Agente (Pre-Task) |
+| `aos status [--json]` | Estado derivado de archivos: `Working`, `Checking`, `Ready` o `Needs decision`. | Agente / Desarrollador |
+| `aos doctor [--strict]` | Audita el harness cargado contra lo que declara `.aos/`. Solo lectura; ningún hook lo ejecuta. | Agente / Desarrollador |
 | `aos verify [--type lint\|test\|migration] [--strict]` | Ejecuta linters, test suites y migrations (configurados o autodetectados). Omite herramientas no instaladas salvo con `--strict`. | Agente (Post-Task) |
 | `aos scan [--tool semgrep\|checkov] [--dry-run]` | Ejecuta SAST (Semgrep) e IaC (Checkov, solo si hay IaC o con `--tool checkov`) con modo dry-run local. | Agente (Post-Task) |
 | `aos adapt-native <herramienta> [--dry-run] [--yes]` | Genera los nativos de `claude-code` o `antigravity` desde `.aos/` (hooks y permisos solo con `--yes`). | Desarrollador / Agente |

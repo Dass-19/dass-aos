@@ -2,6 +2,7 @@
 id: 202610031416
 type: skill-spec
 status: evergreen
+cost: on-demand
 name: "git-atomic-commit"
 description: "Crea commits atómicos con Conventional Commits y lista explícita de archivos; nunca git add -A."
 runtime: python

@@ -2,6 +2,7 @@
 id: 202610031412
 type: skill-spec
 status: evergreen
+cost: on-demand
 name: "generate-client"
 description: "Genera clientes tipados a partir de los contratos OpenAPI de .aos/contracts/http/."
 runtime: python
