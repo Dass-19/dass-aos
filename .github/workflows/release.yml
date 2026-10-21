@@ -47,7 +47,7 @@ jobs:
         run: ruff check .
 
       - name: Run test suite
-        run: python -m unittest discover -s tests -p "test_*.py"
+        run: python -m unittest discover -b -s tests -p "test_*.py"
 
       - name: Audit harness with aos doctor
         run: python -m dass_aos.cli doctor --strict

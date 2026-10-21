@@ -56,7 +56,7 @@ def detect_stack_commands(project_root: Path) -> Dict[str, Optional[str]]:
     # Python
     if not inferred["test_command"]:
         if (project_root / "pyproject.toml").exists() or (project_root / "setup.py").exists() or (project_root / "tests").exists():
-            inferred["test_command"] = "python -m unittest"
+            inferred["test_command"] = "python -m unittest discover -b -s tests -p \"test_*.py\""
             inferred["lint_command"] = "ruff check ."
 
     # Rust
