@@ -81,9 +81,15 @@ class ClaudeAdapter(NativeAdapter):
         user = self.load_json(Path.home() / ".claude.json")
         servers = set(user.get("mcpServers", {}))
         # Claude Code keys projects as C:/x, c:/x or C:\x depending on how it was opened
-        me = self.root.as_posix().casefold()
+        me = self.root.resolve().as_posix().casefold()
+        me_raw = self.root.as_posix().casefold()
         for key, project in user.get("projects", {}).items():
-            if key.replace("\\", "/").casefold() == me:
+            k_norm = key.replace("\\", "/").casefold()
+            try:
+                k_resolved = Path(key).resolve().as_posix().casefold()
+            except Exception:
+                k_resolved = k_norm
+            if k_norm == me_raw or k_resolved == me:
                 servers |= set(project.get("mcpServers", {}))
         servers |= set(self.load_json(self.root / ".mcp.json").get("mcpServers", {}))
         plugins = self.load_json(Path.home() / ".claude" / "settings.json").get("enabledPlugins", {})

@@ -9,6 +9,8 @@ Two independent checks:
 
 Bypass (deliberate, not accidental): `git commit --no-verify`.
 """
+from __future__ import annotations
+
 import fnmatch
 import importlib.util
 import json

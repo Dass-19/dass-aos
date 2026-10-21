@@ -112,7 +112,7 @@ class TestClaudeAdapter(ToolTestCase):
 
     def test_project_mcp_found_whatever_the_key_spelling(self):
         self.home.mkdir()
-        key = str(self.root).replace("/", "\\").lower()  # Claude Code may store c:\x, C:/x or c:/x
+        key = str(self.root.resolve()).replace("/", "\\").lower()  # Claude Code may store c:\x, C:/x or c:/x
         (self.home / ".claude.json").write_text(json.dumps({"projects": {key: {"mcpServers": {"context7": {}}}}}), encoding="utf-8")
         self.assertIn("user:context7", list(ClaudeAdapter(self.root.resolve()).registered_mcp()))
 
