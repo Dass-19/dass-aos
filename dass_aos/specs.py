@@ -13,6 +13,7 @@ from typing import List, NamedTuple, Optional
 
 from .constants import AOS_DIR_NAME, TEMPLATES_DIR, configure_utf8_output
 from .plans import slugify
+from .ui import Card, bold, cyan, dim, green
 
 SPEC_KINDS = ("prd", "trd")
 CLOSED_STATUSES = {"closed", "archived", "cerrado", "archivado", "done"}
@@ -146,5 +147,16 @@ def create_new_spec(
         )
 
     target.write_text(content, encoding="utf-8")
-    print(f"[spec] CREATED new {kind.upper()}: {target}")
+
+    card = Card("Nueva Spec", target.name)
+    card.field("Tipo", bold(kind.upper()))
+    card.field("Título", title)
+    card.field("Archivo", dim(str(target)))
+    card.empty()
+    card.line(f"  {green('✓')} Especificación {bold(kind.upper())} creada en {bold('.aos/specs/' + target.name)}")
+    pair = "trd" if kind == "prd" else "prd"
+    pair_cmd = f'aos spec new {pair} --title "{title}"'
+    card.line(f"  {cyan('▶')} {dim('Contraparte:')} Genera la pareja técnica con: {bold(pair_cmd)}")
+    print(card.render())
+
     return target

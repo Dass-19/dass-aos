@@ -10,6 +10,18 @@ from typing import Optional
 
 from .constants import AOS_DIR_NAME, TEMPLATES_DIR, configure_utf8_output
 from .sync import skill_applies
+from .ui import (
+    Card,
+    badge_fail,
+    badge_info,
+    badge_pass,
+    badge_skip,
+    bold,
+    dim,
+    green,
+    red,
+    yellow,
+)
 
 
 def check_tool_installed(tool_name: str) -> Optional[str]:
@@ -110,7 +122,13 @@ def run_security_scans(
     """Run requested security scans and return combined status."""
     configure_utf8_output()
     target_path = target_path.resolve()
-    print(f"=== DASS-AOS Security Scan on '{target_path.name}' ===")
+
+    card = Card("Seguridad", target_path.name)
+    card.field("Ruta", dim(str(target_path)))
+    card.field("Herramienta", bold(tool))
+    card.field("Modo", yellow("dry-run") if dry_run else "análisis activo")
+    card.empty()
+    card.line(bold("Escaneos de seguridad:"))
 
     overall_code = 0
 
@@ -118,13 +136,30 @@ def run_security_scans(
         code = run_semgrep(target_path, dry_run=dry_run, strict=strict)
         if code != 0:
             overall_code = code
+            card.line(f"  {badge_fail('FAILED')}   {bold('SEMGREP'):<10} código {code}")
+        elif dry_run or not check_tool_installed("semgrep"):
+            card.line(f"  {badge_info('DRY-RUN')}  {bold('SEMGREP'):<10} {dim('simulado o no instalado')}")
+        else:
+            card.line(f"  {badge_pass('PASSED')}   {bold('SEMGREP'):<10} {green('sin vulnerabilidades')}")
 
     if tool == "all" and not checkov_applies(target_path):
-        print("[checkov-scan] SKIPPED: no IaC detected (applies_when en checkov-scan.md); usa --tool checkov para forzarlo.")
+        card.line(f"  {badge_skip('SKIPPED')}  {bold('CHECKOV'):<10} {dim('sin IaC detectada')}")
     elif tool in ("all", "checkov"):
         code = run_checkov(target_path, dry_run=dry_run, strict=strict)
-        if code != 0 and overall_code == 0:
-            overall_code = code
+        if code != 0:
+            if overall_code == 0:
+                overall_code = code
+            card.line(f"  {badge_fail('FAILED')}   {bold('CHECKOV'):<10} código {code}")
+        elif dry_run or not check_tool_installed("checkov"):
+            card.line(f"  {badge_info('DRY-RUN')}  {bold('CHECKOV'):<10} {dim('simulado o no instalado')}")
+        else:
+            card.line(f"  {badge_pass('PASSED')}   {bold('CHECKOV'):<10} {green('sin vulnerabilidades')}")
 
-    print(f"=== Scan Finished (Exit Code: {overall_code}) ===")
+    card.empty()
+    if overall_code == 0:
+        card.field("Resultado", green(bold("✓ Escaneo completado sin fallos")))
+    else:
+        card.field("Resultado", red(bold(f"✖ Falló el análisis de seguridad (código {overall_code})")))
+
+    print("\n" + card.render())
     return overall_code

@@ -4,7 +4,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-VERSION = "0.7.0"
+VERSION = "0.7.1"
 
 # Managed block markers
 MANAGED_START = "<!-- DASS-AOS-MANAGED-START -->"

@@ -19,6 +19,16 @@ from typing import List, Optional
 
 from .constants import AOS_DIR_NAME, configure_utf8_output
 from .specs import open_specs
+from .ui import (
+    Card,
+    bold,
+    cyan,
+    dim,
+    green,
+    make_progress_bar,
+    red,
+    yellow,
+)
 
 NEEDS_DECISION = "Needs decision"
 WORKING = "Working"
@@ -181,6 +191,73 @@ def build_report(project_root: Path) -> StatusReport:
     )
 
 
+def format_status_card(report: StatusReport, project_root: Path) -> str:
+    state_config = {
+        WORKING: (yellow, "● WORKING", "en desarrollo"),
+        CHECKING: (cyan, "🔍 CHECKING", "verificación y revisión"),
+        READY: (green, "✓ READY", "listo"),
+        NEEDS_DECISION: (red, "⚑ NEEDS DECISION", "decisión requerida"),
+    }
+
+    theme_fn, badge, fallback_label = state_config.get(report.state, (cyan, f"[{report.state}]", ""))
+
+    if report.state == NEEDS_DECISION:
+        label = report.reason
+    elif report.state == READY:
+        label = report.reason
+    elif report.state == CHECKING and "verificación" not in report.reason.lower():
+        label = report.reason
+    else:
+        label = fallback_label
+
+    card = Card("Estado", project_root.name)
+    card.field("Ruta", dim(str(project_root)))
+    card.field("Estado", f"{theme_fn(bold(badge))}  {dim('—')} {label}")
+
+    if report.plan and report.plan.total:
+        pct = int((report.plan.done / report.plan.total) * 100)
+        bar_text = make_progress_bar(report.plan.done, report.plan.total, 24)
+        bar_color = green if pct == 100 else (yellow if pct > 0 else cyan)
+        card.field("Progreso", bar_color(bold(bar_text)))
+
+    if report.plan:
+        p_title = report.plan.title
+        if p_title.lower().startswith("plan:"):
+            p_title = p_title[5:].strip()
+        card.field("Plan", bold(p_title))
+        others = f" {dim(f'(+{report.other_plans} más)')}" if report.other_plans else ""
+        card.line(f"            {dim(report.plan.path.name)}{others}")
+    else:
+        card.field("Plan", dim("(no hay plan activo)"))
+
+    if report.next_task:
+        task_match = re.match(r"^(.*?)\s*(\(.*?\))\s*$", report.next_task)
+        if task_match:
+            main_task, note = task_match.group(1).strip(), task_match.group(2).strip()
+            card.field("Siguiente", f"{bold('▶')} {bold(main_task)}")
+            card.line(f"             {dim('↳ ' + note)}")
+        else:
+            card.field("Siguiente", f"{bold('▶')} {bold(report.next_task)}")
+
+    facts = []
+    if report.doctor_errors == 0:
+        facts.append(green("✓ doctor: 0 errores"))
+    else:
+        facts.append(red(f"✖ doctor: {report.doctor_errors} error(es)"))
+
+    if report.specs_without_pair:
+        facts.append(yellow(f"⚑ specs: {report.specs_without_pair} sin pareja"))
+    elif report.open_specs:
+        facts.append(dim(f"specs: {report.open_specs} abiertas"))
+  
+    facts.append(dim(f"{report.plan.done}/{report.plan.total} fases" if report.plan and report.plan.total else "al día"))
+
+    sep = f" {dim('·')} "
+    card.field("Salud", sep.join(facts))
+
+    return card.render()
+
+
 def run_status(project_root: Path, as_json: bool = False) -> int:
     configure_utf8_output()
     report = build_report(project_root.resolve())
@@ -189,12 +266,5 @@ def run_status(project_root: Path, as_json: bool = False) -> int:
         print(json.dumps(report.as_dict(), ensure_ascii=True, indent=2, default=str))
         return 0
 
-    print(f"[aos status] {project_root.resolve()}")
-    print(f"  Estado: {report.state} — {report.reason}")
-    if report.plan:
-        others = f" (+{report.other_plans} plan(es) activo(s) más)" if report.other_plans else ""
-        print(f"  Plan: {report.plan.title} ({report.plan.path.name}){others}")
-    if report.next_task:
-        print(f"  Siguiente: {report.next_task}")
-    print(f"  Hechos: {' · '.join(report.extras)}")
+    print(format_status_card(report, project_root.resolve()))
     return 0

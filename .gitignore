@@ -58,6 +58,7 @@ test-client/
 .agents/skills/adversarial-review/SKILL.md
 .agents/skills/api-smoke-test/SKILL.md
 .agents/skills/bootstrap-project/SKILL.md
+.agents/skills/checkov-scan/SKILL.md
 .agents/skills/generate-client/SKILL.md
 .agents/skills/git-atomic-commit/SKILL.md
 .agents/skills/live-verify/SKILL.md
@@ -80,6 +81,7 @@ test-client/
 .claude/skills/adversarial-review/SKILL.md
 .claude/skills/api-smoke-test/SKILL.md
 .claude/skills/bootstrap-project/SKILL.md
+.claude/skills/checkov-scan/SKILL.md
 .claude/skills/generate-client/SKILL.md
 .claude/skills/git-atomic-commit/SKILL.md
 .claude/skills/live-verify/SKILL.md

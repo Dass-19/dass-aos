@@ -4,11 +4,21 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 from typing import Dict, Optional
 
 from .constants import AOS_DIR_NAME, configure_utf8_output
+from .ui import (
+    Card,
+    badge_fail,
+    badge_pass,
+    badge_skip,
+    bold,
+    cyan,
+    dim,
+    green,
+    red,
+)
 
 
 def load_project_config(project_root: Path) -> Dict[str, Optional[str]]:
@@ -73,7 +83,11 @@ def run_verification(
     config = load_project_config(project_root)
     inferred = detect_stack_commands(project_root)
 
-    print(f"=== DASS-AOS Verification on '{project_root.name}' ===")
+    card = Card("Verificación", project_root.name)
+    card.field("Ruta", dim(str(project_root)))
+    card.field("Alcance", bold(check_type))
+    card.empty()
+    card.line(bold("Comprobaciones del proyecto:"))
 
     overall_code = 0
     checks = ["lint", "test", "migration"] if check_type == "all" else [check_type]
@@ -83,29 +97,35 @@ def run_verification(
         cmd = config.get(key) or inferred.get(key)
 
         if not cmd:
-            print(f"[{check.upper()}] SKIPPED: No {key} configured in .aos/config.json")
+            card.line(f"  {badge_skip('SKIPPED')}  {bold(check.upper()):<10} {dim('sin comando configurado')}")
             if strict:
                 overall_code = 1
             continue
 
         exe = cmd.split()[0]
         if shutil.which(exe) is None:
-            print(f"[{check.upper()}] SKIPPED: '{exe}' no está instalado (comando: {cmd})")
+            card.line(f"  {badge_skip('SKIPPED')}  {bold(check.upper()):<10} {dim(f'herramienta no instalada ({exe})')}")
             if strict:
                 overall_code = 1
             continue
 
-        print(f"[{check.upper()}] Executing: {cmd}")
+        print(f"\n{bold(cyan('▶'))} {bold(f'[{check.upper()}]')} {dim(cmd)}")
         try:
             proc = subprocess.run(cmd, shell=True, cwd=str(project_root), check=False)
             if proc.returncode != 0:
-                print(f"[{check.upper()}] FAILED (exit code: {proc.returncode})", file=sys.stderr)
+                card.line(f"  {badge_fail('FAILED')}   {bold(check.upper()):<10} {red(f'código {proc.returncode}')} — {dim(cmd)}")
                 overall_code = proc.returncode
             else:
-                print(f"[{check.upper()}] PASSED")
+                card.line(f"  {badge_pass('PASSED')}   {bold(check.upper()):<10} {green('exitoso')} — {dim(cmd)}")
         except Exception as exc:
-            print(f"[{check.upper()}] Execution error: {exc}", file=sys.stderr)
+            card.line(f"  {badge_fail('ERROR')}    {bold(check.upper()):<10} {exc}")
             overall_code = 1
 
-    print(f"=== Verification Finished (Exit Code: {overall_code}) ===")
+    card.empty()
+    if overall_code == 0:
+        card.field("Resultado", green(bold("✓ Todas las comprobaciones pasaron")))
+    else:
+        card.field("Resultado", red(bold(f"✖ Fallaron comprobaciones (código {overall_code})")))
+
+    print("\n" + card.render())
     return overall_code

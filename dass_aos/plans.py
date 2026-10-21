@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 from .constants import AOS_DIR_NAME, TEMPLATES_DIR, configure_utf8_output
+from .ui import Card, bold, cyan, dim, green
 
 
 def slugify(value: str) -> str:
@@ -57,5 +58,14 @@ def create_new_plan(
     target_path = active_dir / target_filename
 
     target_path.write_text(content, encoding="utf-8")
-    print(f"[plan] CREATED new active plan: {target_path}")
+
+    card = Card("Nuevo Plan", target_filename)
+    card.field("Plantilla", bold(template_type))
+    card.field("Título", title)
+    card.field("Archivo", dim(str(target_path)))
+    card.empty()
+    card.line(f"  {green('✓')} Plan activo creado en {bold('.aos/plans/active/' + target_filename)}")
+    card.line(f"  {cyan('▶')} {dim('Siguiente paso:')} Completa la Fase 1 (Discovery & contratos) y revisa con {bold('aos status')}")
+    print(card.render())
+
     return target_path

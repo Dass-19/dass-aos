@@ -18,6 +18,8 @@ from .native import ADAPTERS, get_adapter
 from .native.antigravity import refresh_hook
 from .native.manifest import native_source_hash
 from .sync import sync_all_instructions
+from .ui import Card, bold, cyan, dim, green, red, yellow
+from .update import run_update
 from .verifier import run_verification
 
 
@@ -119,6 +121,10 @@ def build_parser() -> argparse.ArgumentParser:
     status_p.add_argument("--project-root", default=".", help="Project root directory")
     status_p.add_argument("--json", action="store_true", help="Machine-readable output")
 
+    # 11. update
+    update_p = subparsers.add_parser("update", help="Upgrade project .aos/ state, templates, hooks, and skills to current DASS-AOS version")
+    update_p.add_argument("--project-root", default=".", help="Project root directory (default: current directory)")
+
     return parser
 
 
@@ -132,26 +138,51 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "init":
             root = Path(args.project_root).resolve()
             res = init_project(root, project_name=args.project_name, force=args.force, tools=args.tools, native=True)
-            print(f"\n[aos init] DASS-AOS inicializado en: {res['project_root']}")
-            print(f"Herramientas: {', '.join(res['tools'])} (en .aos/config.json; añade otra con `aos init <herramienta>`)")
-            print("Archivos de instrucciones:")
+            card = Card("Inicialización", res["project_name"])
+            card.field("Ruta", dim(str(res["project_root"])))
+            card.field("Herramientas", bold(", ".join(res["tools"])))
+            card.empty()
+            card.line(bold("Archivos e instrucciones:"))
             for fname, action in res["sync_results"].items():
-                print(f"  - {fname}: {action}")
+                badge = green("✓ " + action) if "ACTUALIZADO" in action else dim("· " + action)
+                card.line(f"  {badge:<22} {bold(fname)}")
             for tool, lines in res["native_results"].items():
-                print(f"Nativos de {tool}:" + ("" if lines else " al día"))
+                card.empty()
+                card.line(bold(f"Adaptaciones nativas ({tool}):"))
+                if not lines:
+                    card.line(f"  {green('✓')} al día")
                 for line in lines:
-                    print(f"  - {line}")
+                    card.line(f"  · {line}")
                 if any("PENDIENTE" in line for line in lines):
-                    print(f"  -> Revisa los hooks pendientes y aplícalos con `aos adapt-native {tool} --yes`.")
-            print("\nSiguiente paso: 'aos refresh' al inicio de cada sesión del agente.")
+                    card.line(f"  {yellow('▲')} Aplica los hooks pendientes con: `aos adapt-native {tool} --yes`")
+            card.empty()
+            card.line(f"  {cyan('▶')} {bold('Siguiente paso:')} ejecuta {yellow(bold('aos refresh'))} al inicio de cada sesión del agente.")
+            print(card.render())
             return 0
 
         elif args.command == "sync":
             root = Path(args.project_root).resolve()
             res = sync_all_instructions(root)
-            print(f"\n[aos sync] Agent instruction sync complete for: {root}")
+            card = Card("Sync", root.name)
+            card.field("Ruta", dim(str(root)))
+            card.empty()
+            card.line(bold("Instrucciones y herramientas:"))
             for fname, action in res.items():
-                print(f"  - {fname}: {action}")
+                if "ACTUALIZADO" in action:
+                    action_badge = green("✓ " + action)
+                elif "SIN CAMBIOS" in action:
+                    action_badge = dim("· " + action)
+                elif "OMITIDO" in action:
+                    action_badge = yellow("▲ " + action)
+                elif "DESACTUALIZADO" in action:
+                    action_badge = red("✖ " + action)
+                else:
+                    action_badge = action
+                card.line(f"  {action_badge:<22} {bold(fname)}")
+            card.empty()
+            updated_count = sum(1 for a in res.values() if "ACTUALIZADO" in a)
+            card.field("Resultado", green(bold(f"✓ {updated_count} archivo(s) actualizados")) if updated_count else dim("todo al día, sin cambios"))
+            print(card.render())
             return 0
 
         elif args.command == "native-hash":
@@ -161,10 +192,32 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "adapt-native":
             adapter = get_adapter(args.tool, Path(args.project_root).resolve())
             changes = adapter.run(dry_run=args.dry_run, yes=args.yes)
-            prefix = "[aos adapt-native] (dry-run) " if args.dry_run else "[aos adapt-native] "
-            print(prefix + (f"{len(changes)} cambio(s) en {args.tool}:" if changes else f"{args.tool} al día, sin cambios."))
-            for line in changes + [f"AVISO: {w}" for w in adapter.warnings]:
-                print(f"  - {line}")
+            card = Card("Adapt Native", args.tool)
+            card.field("Herramienta", bold(args.tool))
+            card.field("Modo", yellow("dry-run (simulación)") if args.dry_run else "aplicar cambios")
+            card.empty()
+            if not changes and not adapter.warnings:
+                card.line(f"  {green('✓')} {args.tool} al día, sin cambios necesarios.")
+            else:
+                if changes:
+                    card.line(bold("Cambios aplicados:"))
+                    for line in changes:
+                        if line.startswith("creado:"):
+                            card.line(f"  {green('✓')} {line}")
+                        elif line.startswith("actualizado:") or line.startswith("fusionado:"):
+                            card.line(f"  {cyan('↻')} {line}")
+                        elif "PENDIENTE" in line:
+                            card.line(f"  {yellow('▲')} {line}")
+                        else:
+                            card.line(f"  · {line}")
+                if adapter.warnings:
+                    card.empty()
+                    card.line(bold("Avisos:"))
+                    for w in adapter.warnings:
+                        card.line(f"  {yellow('▲')} {w}")
+            card.empty()
+            card.field("Resultado", green(bold(f"✓ {len(changes)} cambio(s) aplicados")) if changes else dim("al día"))
+            print(card.render())
             return 0
 
         elif args.command == "refresh":
@@ -221,6 +274,10 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "status":
             root = Path(args.project_root).resolve()
             return run_status(root, as_json=args.json)
+
+        elif args.command == "update":
+            root = Path(args.project_root).resolve()
+            return run_update(root)
 
     except Exception as exc:
         print(f"[aos ERROR]: {exc}", file=sys.stderr)

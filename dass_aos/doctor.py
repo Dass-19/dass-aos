@@ -26,6 +26,17 @@ from .sync import (
     get_available_skills,
     validate_tools_allowed,
 )
+from .ui import (
+    Card,
+    badge_error,
+    badge_info,
+    badge_warn,
+    bold,
+    dim,
+    green,
+    red,
+    yellow,
+)
 
 # Always-on prose competes with the agent's output budget; Antigravity caps its rules at 20k tokens.
 ALWAYS_ON_WARN_CHARS = 12_000
@@ -206,6 +217,47 @@ def collect_findings(project_root: Path) -> List[Finding]:
     return sorted(findings, key=lambda f: (order[f.level], f.area))
 
 
+def format_doctor_card(project_root: Path, findings: List[Finding], counts: Dict[str, int]) -> str:
+    card = Card("Doctor", project_root.name)
+    card.field("Ruta", dim(str(project_root)))
+    card.field("Modo", dim("solo diagnóstico (read-only, no modifica archivos)"))
+    card.empty()
+
+    if not findings:
+        card.line(f"  {green('✓')} {bold('Sin hallazgos')}: el harness cargado coincide con lo que declara `.aos/`.")
+    else:
+        card.line(bold("Hallazgos:"))
+        badge_map = {
+            "error": badge_error("ERROR"),
+            "warn": badge_warn("AVISO"),
+            "info": badge_info("INFO"),
+        }
+        for finding in findings:
+            b = badge_map.get(finding.level, badge_info(finding.level.upper()))
+            card.line(f"  {b}  {bold(finding.area)}: {finding.message}")
+
+    card.empty()
+
+    summary_parts = []
+    if counts["error"] == 0 and counts["warn"] == 0:
+        summary_parts.append(green(bold("✓ 0 errores · 0 avisos")))
+    else:
+        if counts["error"] > 0:
+            summary_parts.append(red(bold(f"✖ {counts['error']} error(es)")))
+        else:
+            summary_parts.append(green("✓ 0 errores"))
+        if counts["warn"] > 0:
+            summary_parts.append(yellow(bold(f"▲ {counts['warn']} aviso(s)")))
+        else:
+            summary_parts.append(dim("0 avisos"))
+
+    summary_parts.append(dim(f"{counts['info']} info"))
+    card.field("Diagnóstico", " · ".join(summary_parts))
+    card.field("Herramientas", dim(f"{', '.join(sorted(TOOL_VOCABULARY))}, shell:<prefijo>, mcp:<servidor>"))
+
+    return card.render()
+
+
 def run_doctor(project_root: Path, strict: bool = False) -> int:
     """Print the harness audit. Returns 1 only with `strict` and at least one error."""
     configure_utf8_output()
@@ -215,13 +267,7 @@ def run_doctor(project_root: Path, strict: bool = False) -> int:
     for finding in findings:
         counts[finding.level] += 1
 
-    print(f"[aos doctor] {root} — solo diagnóstico, no escribe nada")
-    if not findings:
-        print("  Sin hallazgos. El harness cargado coincide con lo que declara `.aos/`.")
-    for finding in findings:
-        print(f"  {finding.level.upper():5} {finding.area}: {finding.message}")
-    print(f"Diagnóstico: {counts['error']} error(es), {counts['warn']} aviso(s), {counts['info']} info.")
-    print(f"Vocabulario de tools: {', '.join(sorted(TOOL_VOCABULARY))}, shell:<prefijo>, mcp:<servidor>.")
+    print(format_doctor_card(root, findings, counts))
     if counts["error"] and strict:
         return 1
     return 0
