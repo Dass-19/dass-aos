@@ -54,7 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
     native_p = subparsers.add_parser("native-hash", help="Print the source hash that adapt-native records in .aos/native/<tool>.json")
     native_p.add_argument("--project-root", default=".", help="Root path of target project (default: current directory)")
 
-    adapt_p = subparsers.add_parser("adapt-native", help="Generate the native files of an AI tool from .aos/ (ADR-005)")
+    adapt_p = subparsers.add_parser("adapt-native", help="Generate the native files of an AI tool from .aos/")
     adapt_p.add_argument("tool", help=f"Tool id: {', '.join(sorted(ADAPTERS))} (others: skill adapt-native)")
     adapt_p.add_argument("--project-root", default=".", help="Root path of target project (default: current directory)")
     adapt_p.add_argument("--dry-run", action="store_true", help="Show the changes without writing anything")
@@ -112,7 +112,7 @@ def build_parser() -> argparse.ArgumentParser:
     spec_new_p.add_argument("--project-root", default=".", help="Project root directory")
 
     # 9. doctor
-    doctor_p = subparsers.add_parser("doctor", help="Read-only audit of the agent harness loaded from .aos/ (ADR-008)")
+    doctor_p = subparsers.add_parser("doctor", help="Read-only audit of the agent harness loaded from .aos/")
     doctor_p.add_argument("--project-root", default=".", help="Project root directory")
     doctor_p.add_argument("--strict", action="store_true", help="Exit 1 when there are error-level findings")
 

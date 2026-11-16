@@ -15,7 +15,7 @@
      aos generate-client --contract .aos/contracts/http/<especificacion>.yaml --output <directorio-cliente>
      ```
 
-2. **Verificación en Vivo y Revisión (ADR-008)**:
+2. **Verificación en Vivo y Revisión**:
    - Si se tocó UI, API, CLI o una app de escritorio: skill `live-verify` (levantar, ejercitar, mirar la evidencia y corregir, hasta 3 rondas).
    - Si el cambio tiene **riesgo nombrado** (datos, seguridad, contratos compartidos, concurrencia, entrega) o no existe test que atrape una regresión: skill `adversarial-review` con **recibo**. El tamaño se decide por riesgo, no por número de archivos.
      1. Congelar el candidato: anotar en el plan el hash del diff y los archivos que lo componen, antes de que nadie lo lea.

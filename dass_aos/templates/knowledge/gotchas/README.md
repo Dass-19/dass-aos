@@ -18,4 +18,4 @@ tags: []
 - **Prevención**: Regla práctica para no volver a tropezar con la misma piedra.
 
 Los agentes **deben** consultar este directorio al inicio de cada sesión (`aos refresh`) y antes de iniciar una tarea (`pre-task`).
-El comando `aos refresh` extrae automáticamente las trampas más recientes.
+El comando `aos refresh` muestra primero las trampas abiertas, por gravedad (`severity`), y a igual gravedad la más reciente.

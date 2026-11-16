@@ -4,7 +4,7 @@ type: skill-spec
 status: evergreen
 cost: on-demand
 name: "phased-delivery"
-description: "Flujo por fases para cambios con riesgo nombrado (datos, seguridad, contratos compartidos, concurrencia, entrega) o poco comprendidos: explorar en paralelo, escribir PRD/TRD, decidir con el usuario, planificar en .aos/plans, implementar en orden de dependencias con gates por fase, verificar en vivo y revisar con recibo. El tamaño se decide por riesgo y comprensión, nunca por número de archivos (ADR-008). Úsala también para continuar un plan activo fase por fase."
+description: "Flujo por fases para cambios con riesgo nombrado (datos, seguridad, contratos compartidos, concurrencia, entrega) o poco comprendidos: explorar en paralelo, escribir PRD/TRD, decidir con el usuario, planificar en .aos/plans, implementar en orden de dependencias con gates por fase, verificar en vivo y revisar con recibo. El tamaño se decide por riesgo y comprensión, nunca por número de archivos. Úsala también para continuar un plan activo fase por fase."
 runtime: agent
 entrypoint: "instrucciones para el agente (sin comando)"
 inputs:
@@ -29,7 +29,7 @@ created: 2026-10-16
 
 ## 0.5 Enrutado por riesgo (tamaño de la tarea)
 
-El tamaño se decide por **riesgo** (datos, seguridad, contratos compartidos, concurrencia, entrega) y por lo **comprendida** que esté la tarea. **Nunca por número de archivos** (ADR-008). Un bug de tres líneas en un archivo de migración es grande; un renombrado en veinte archivos de texto es pequeño.
+El tamaño se decide por **riesgo** (datos, seguridad, contratos compartidos, concurrencia, entrega) y por lo **comprendida** que esté la tarea. **Nunca por número de archivos**. Un bug de tres líneas en un archivo de migración es grande; un renombrado en veinte archivos de texto es pequeño.
 
 | Tier | Señales | Flujo |
 |---|---|---|
@@ -51,14 +51,14 @@ El tamaño se decide por **riesgo** (datos, seguridad, contratos compartidos, co
 - Cada uno devuelve hallazgos con `archivo:línea`, piezas reutilizables y riesgos, comprobados en el código y no supuestos.
 
 ## 2. Requisitos y decisiones del usuario
-- **Si tiene alcance de producto**, PRD y TRD antes de los contratos (ADR-007, skill `spec-driven`): `aos spec new prd --title "<título>"` y luego el TRD con el mismo título, que reutiliza el número. Sin criterios de aceptación medibles, no se pasa al TRD.
+- **Si tiene alcance de producto**, PRD y TRD antes de los contratos (skill `spec-driven`): `aos spec new prd --title "<título>"` y luego el TRD con el mismo título, que reutiliza el número. Sin criterios de aceptación medibles, no se pasa al TRD.
 - Pregunta solo lo que le corresponde decidir (alcance, tecnología, diseño, algo destructivo): 2–4 opciones, la recomendada primero y con su coste.
 - Lo que tenga un valor por defecto razonable no se pregunta: se decide y se dice.
 - Anota cada respuesta en el *Discovery Trail* del plan. Una pregunta registrada sin `Decisión:` deja el trabajo en `Needs decision`.
 
 ## 3. Plan y diseño (rol `architect`)
-1. `aos plan new feature --title "<título>"` y rellena el plan en `.aos/plans/active/NNN-*.md`: Definition of Done medible, riesgo esperado (ADR-008) y fases atómicas, **cada una con su línea `Gate:`**. Enlaza el PRD y el TRD.
-2. Si van a trabajar varios agentes, escribe al lado `NNN-<slug>.design.md` con los nombres exactos de archivos, funciones y claves, las decisiones verificadas y los comandos de comprobación. Es el contexto que comparten: si algo cambia, se actualiza ahí. **El requisito se cita por ruta y sección, nunca se parafrasea** (ADR-007).
+1. `aos plan new feature --title "<título>"` y rellena el plan en `.aos/plans/active/NNN-*.md`: Definition of Done medible, riesgo esperado y fases atómicas, **cada una con su línea `Gate:`**. Enlaza el PRD y el TRD.
+2. Si van a trabajar varios agentes, escribe al lado `NNN-<slug>.design.md` con los nombres exactos de archivos, funciones y claves, las decisiones verificadas y los comandos de comprobación. Es el contexto que comparten: si algo cambia, se actualiza ahí. **El requisito se cita por ruta y sección, nunca se parafrasea**.
 3. Un ADR en `.aos/decisions/` por cada decisión transversal nueva.
 4. Presenta el plan y **espera la aprobación** antes de escribir código, salvo que el usuario haya pedido trabajar de corrido.
 
@@ -82,7 +82,7 @@ Los que apliquen a lo tocado; todos deben pasar.
 Skill `live-verify`, para cualquier cambio en UI, API, CLI o app de escritorio: levantar la app, ejercitarla, mirar la evidencia y corregir, en hasta 3 rondas.
 
 ## 7. Revisión con recibo
-Va después de `live-verify` para que también se revisen sus correcciones. Skill `adversarial-review` (ADR-008):
+Va después de `live-verify` para que también se revisen sus correcciones. Skill `adversarial-review`:
 1. **Congelar el candidato** antes de leerlo: hash del árbol y archivos que lo componen, anotados en el plan.
 2. **Tier por riesgo**: pasivo (0 lentes), medio (1 lente) o alto (4R + verificador independiente).
 3. Revisores por lente → un `adversarial-verifier` por hallazgo → **una sola corrección acotada** → acuse con los gates repetidos.

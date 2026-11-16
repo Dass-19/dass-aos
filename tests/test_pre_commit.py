@@ -32,6 +32,13 @@ class TestPreCommitGuard(unittest.TestCase):
     def test_regular_source_files_are_not_blocked(self):
         self.assertEqual(self.hook.blocked(["src/app.py", "README.md", "docs/env.md"], DEFAULT_DENY_PATHS), [])
 
+    def test_exceptions_unblock_example_files(self):
+        self.assertEqual(self.hook.blocked(["backend/env/.env.example"], DEFAULT_DENY_PATHS), [])
+        self.assertTrue(self.hook.blocked(["backend/env/dev/.env"], DEFAULT_DENY_PATHS))
+        patterns = ["*.env", "!*.example.env"]
+        self.assertEqual(self.hook.blocked(["deploy/env/build.example.env"], patterns), [])
+        self.assertTrue(self.hook.blocked(["deploy/env/prod.env"], patterns))
+
     def test_allowlist_is_empty_by_default(self):
         import os
         import tempfile

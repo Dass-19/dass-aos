@@ -48,6 +48,7 @@ AOS_DIR_NAME = ".aos"
 DEFAULT_DENY_PATHS = [
     ".env", ".env.*", "*.pem", "*.key", "*.p12", "*.pfx", "*.kdbx",
     "id_rsa", "id_ed25519", "*.ppk", ".ssh/", ".aws/", ".gnupg/", ".kube/", ".docker/",
+    "!.env.example", "!.env.sample",
 ]
 
 # Templates shipped inside the package; layout mirrors .aos/

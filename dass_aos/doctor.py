@@ -89,7 +89,7 @@ def check_agent_frontmatter(project_root: Path) -> List[Finding]:
         if not (meta.get("description") or "").strip():
             out.append(Finding("error", path.name, "rol sin `description:`"))
         if "tools_allowed" not in meta:
-            out.append(Finding("warn", path.name, "rol sin `tools_allowed:` (ver ADR-004)"))
+            out.append(Finding("warn", path.name, "rol sin `tools_allowed:`"))
     return out
 
 

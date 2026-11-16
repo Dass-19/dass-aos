@@ -41,7 +41,7 @@ Sí la usarás cuando: hay alcance de producto, alguien de negocio tiene que apr
 
 1. `aos spec new trd --title "<mismo título>"` → reutiliza el NNN del PRD.
 2. **Cita el PRD, no lo repitas**: referencia `NNN-<slug>.prd.md` y los CA que cubre.
-3. Declara **los contratos antes de implementarlos** (ADR-001): `.aos/contracts/http/`, `.aos/contracts/events/`, `.aos/contracts/schemas/`. Si un endpoint o evento no está declarado, se declara aquí.
+3. Declara **los contratos antes de implementarlos**: `.aos/contracts/http/`, `.aos/contracts/events/`, `.aos/contracts/schemas/`. Si un endpoint o evento no está declarado, se declara aquí.
 4. Una dependencia nueva necesita ADR antes de aparecer en el TRD.
 5. Anota el **plan de prueba** y la **observabilidad**: cómo se detectaría en producción que esto falla.
 

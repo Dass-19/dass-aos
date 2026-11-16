@@ -15,8 +15,40 @@ WEB_FRONTEND_GLOBS = ["package.json", "*/package.json", "*.html", "*/*.html"]
 NOT_FRONTEND_DIRS = {"htmlcov", "site"}  # coverage and mkdocs output, not an app
 
 
-def list_recent_gotchas(project_root: Path, limit: int = 5) -> List[Tuple[str, Path, dt.date]]:
-    """Obtiene los gotchas más recientes con sus títulos y fechas."""
+SEVERITY_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+CLOSED_STATUSES = {"resuelta", "resolved"}
+
+
+def _gotcha_meta(path: Path) -> Tuple[str, str, str]:
+    """(title, severity, status) from the frontmatter; the title falls back to the first `# ` heading."""
+    title, severity, status = path.stem, "", ""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return title, severity, status
+    in_frontmatter = bool(lines) and lines[0].strip() == "---"
+    for i, line in enumerate(lines):
+        if in_frontmatter and i > 0 and line.strip() == "---":
+            in_frontmatter = False
+            continue
+        if in_frontmatter:
+            key, _, value = line.partition(":")
+            value = value.strip().strip("\"'")
+            if key == "title" and value:
+                title = value
+            elif key == "severity":
+                severity = value.lower()
+            elif key == "status":
+                status = value.lower()
+        elif line.startswith("# "):
+            if title == path.stem:
+                title = line[2:].strip()
+            break
+    return title, severity, status
+
+
+def list_recent_gotchas(project_root: Path, limit: int = 5) -> List[Tuple[str, Path, dt.date, str]]:
+    """Open gotchas first, by severity; same severity, most recently modified first."""
     gotchas_dir = project_root / AOS_DIR_NAME / "knowledge" / "gotchas"
     if not gotchas_dir.exists():
         gotchas_dir = project_root / "knowledge" / "gotchas"
@@ -28,26 +60,14 @@ def list_recent_gotchas(project_root: Path, limit: int = 5) -> List[Tuple[str, P
         p for p in gotchas_dir.glob("*.md")
         if p.name.lower() != "readme.md"
     ]
-    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-
-    results = []
-    for g in files[:limit]:
-        title = g.stem
-        try:
-            content = g.read_text(encoding="utf-8")
-            for line in content.splitlines():
-                if line.startswith("title:"):
-                    title = line.split(":", 1)[1].strip().strip("\"'")
-                    break
-                if line.startswith("# "):
-                    title = line[2:].strip()
-                    break
-        except Exception:
-            pass
-        mtime = dt.datetime.fromtimestamp(g.stat().st_mtime, dt.timezone.utc).date()
-        results.append((title, g, mtime))
-
-    return results
+    entries = []
+    for g in files:
+        title, severity, status = _gotcha_meta(g)
+        mtime = g.stat().st_mtime
+        key = (status in CLOSED_STATUSES, SEVERITY_RANK.get(severity, len(SEVERITY_RANK)), -mtime)
+        entries.append((key, (title, g, dt.datetime.fromtimestamp(mtime, dt.timezone.utc).date(), severity)))
+    entries.sort(key=lambda e: e[0])
+    return [entry for _, entry in entries[:limit]]
 
 
 def list_recent_lessons(project_root: Path, limit: int = 3) -> List[str]:
@@ -137,15 +157,15 @@ def run_memory_refresh(project_root: Path, gotchas_limit: int = 5) -> str:
         "# DASS-AOS · Refresco de Memoria al Inicio de Sesión",
         f"_Marca de tiempo: {now_str}_",
         "",
-        "## 1. Trampas y Gotchas Recientes",
+        "## 1. Trampas y Gotchas Prioritarias (abiertas, por gravedad)",
     ]
 
     gotchas = list_recent_gotchas(project_root, gotchas_limit)
     if not gotchas:
         lines.append("- (No hay gotchas registrados aún. Documenta trampas en `.aos/knowledge/gotchas/` a medida que las descubras)")
     else:
-        for title, path, date_val in gotchas:
-            lines.append(f"- **{title}** (`{path.name}`, {date_val.isoformat()})")
+        for title, path, date_val, severity in gotchas:
+            lines.append(f"- **{title}** ({severity or 'sin gravedad'} · `{path.name}`, {date_val.isoformat()})")
 
     lines.extend([
         "",
@@ -162,7 +182,7 @@ def run_memory_refresh(project_root: Path, gotchas_limit: int = 5) -> str:
 
     specs = open_specs(project_root)
     if not specs:
-        lines.append("- Ninguna. Crea una con `aos spec new prd --title <titulo>` antes de escribir contratos (ADR-007).")
+        lines.append("- Ninguna. Crea una con `aos spec new prd --title <titulo>` antes de escribir contratos.")
     else:
         for spec in specs:
             missing = "" if spec.has_counterpart else " · **falta su pareja**"

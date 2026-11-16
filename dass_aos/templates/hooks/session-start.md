@@ -7,7 +7,7 @@
    aos refresh --gotchas-limit 5
    ```
    Esto expondrá:
-   - Los gotchas más recientes documentados en `.aos/knowledge/gotchas/`.
+   - Los gotchas abiertos más graves documentados en `.aos/knowledge/gotchas/`.
    - El estado de la base de datos de grafo de `codebase-memory`.
    - Las especificaciones abiertas (PRD/TRD) en `.aos/specs/`.
    - El plan activo y la siguiente tarea pendiente.
@@ -15,7 +15,7 @@
 2. **Cargar Contexto Global**  
    Consultar `.aos/config.json`, `.aos/knowledge/`, `.aos/decisions/` y las lecciones de `.aos/knowledge/lessons/LEDGER.md` para calibrar las normas del proyecto.
 
-3. **Requisitos Antes de Código (ADR-007)**  
+3. **Requisitos Antes de Código**  
    Si la funcionalidad tiene alcance de producto y no existen `.aos/specs/NNN-<slug>.prd.md` ni su TRD, seguir la skill `spec-driven`. El PRD se cita, no se parafrasea.
 
 4. **Identificar la Siguiente Tarea**  

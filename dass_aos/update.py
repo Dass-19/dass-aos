@@ -81,7 +81,7 @@ def update_project(project_root: Path) -> Dict[str, object]:
 
     if not config.get("deny_paths"):
         config["deny_paths"] = DEFAULT_DENY_PATHS
-        changes.append("añadido `deny_paths` (ADR-008 seguridad)")
+        changes.append("añadido `deny_paths` (secretos)")
 
     tools = config.get("tools") or []
     if not isinstance(tools, list):

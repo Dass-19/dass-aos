@@ -20,7 +20,7 @@ prd:
 - **Fronteras** (qué NO cruza esta solución, aunque parezca cómodo):
 
 ## Contratos
-> Contract-first (ADR-001). Si algo de aquí no está declarado, se declara antes de implementarlo.
+> Contract-first. Si algo de aquí no está declarado, se declara antes de implementarlo.
 - **HTTP**: `.aos/contracts/http/<especificacion>.yaml` (crear / actualizar / sin cambios)
 - **Eventos**: `.aos/contracts/events/<Esquema>.vN.json`
 - **Esquemas / tipos**:

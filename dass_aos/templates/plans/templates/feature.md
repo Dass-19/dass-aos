@@ -20,12 +20,12 @@ trd:
 - ADRs vinculados: []
 - Gotchas a considerar: []
 - Contratos a crear/actualizar: []
-- Riesgo (ADR-008): datos / seguridad / contratos compartidos / concurrencia / entrega — y profundidad de revisión que implica
+- Riesgo: datos / seguridad / contratos compartidos / concurrencia / entrega — y profundidad de revisión que implica
 
 > La spec se cita, nunca se parafrasea: los handoffs apuntan a la ruta y a la sección del PRD/TRD.
 
 ## Fases de Ejecución Atómica
-> Cada fase termina con su línea `Gate:` (comando exacto y resultado esperado). Una fase no empieza hasta que la anterior la pasa. Flujo completo en la skill `phased-delivery`. El tamaño de la tarea se decide por riesgo y comprensión, no por número de archivos (ADR-008).
+> Cada fase termina con su línea `Gate:` (comando exacto y resultado esperado). Una fase no empieza hasta que la anterior la pasa. Flujo completo en la skill `phased-delivery`. El tamaño de la tarea se decide por riesgo y comprensión, no por número de archivos.
 
 - [ ] Fase 1: Discovery & requisitos
   - Línea base: `aos verify` + gates del proyecto; anotar lo que ya falla
@@ -43,7 +43,7 @@ trd:
 - [ ] Fase 4: Verificación en vivo (skill `live-verify`)
   - Levantar la app, ejercitar lo tocado, mirar la evidencia y corregir (≤3 rondas)
   - Gate: evidencia (capturas/logs/salidas) citada aquí; lo no ejercido, a pruebas manuales
-- [ ] Fase 5: Revisión con recibo (skill `adversarial-review`, ADR-008)
+- [ ] Fase 5: Revisión con recibo (skill `adversarial-review`)
   - Congelar el candidato (hash/diff) **antes** de que nadie lo lea; profundidad según riesgo: 0 lentes (pasivo), 1 (medio) o 4R (alto)
   - Lentes → verificación adversarial por hallazgo → una única corrección acotada → acuse
   - Gate: recibo anotado; confirmados, refutados y pendientes registrados; gates repetidos en verde

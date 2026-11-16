@@ -55,6 +55,24 @@ class TestMemory(unittest.TestCase):
         self.assertIn("Trampa del Outbox sin drenar", output)
         self.assertIn("async-outbox-trap.md", output)
 
+    def test_gotchas_open_first_by_severity_then_newest(self):
+        import os
+        specs = [
+            ("baja-nueva", "low", "vigente", 400),
+            ("alta-vieja", "high", "vigente", 100),
+            ("alta-nueva", "high", "parcial", 300),
+            ("alta-resuelta", "high", "resuelta", 500),
+            ("sin-gravedad", "", "", 600),
+        ]
+        for name, severity, status, mtime in specs:
+            path = self.gotchas_dir / f"{name}.md"
+            path.write_text(
+                f"---\ntitle: {name}\nseverity: {severity}\nstatus: {status}\n---\n", encoding="utf-8"
+            )
+            os.utime(path, (mtime, mtime))
+        titles = [g[0] for g in list_recent_gotchas(self.temp_dir, limit=5)]
+        self.assertEqual(titles, ["alta-nueva", "alta-vieja", "baja-nueva", "sin-gravedad", "alta-resuelta"])
+
     def test_missing_dependencies_only_when_they_apply(self):
         with mock.patch("dass_aos.memory.check_tool_installed", return_value=None):
             names = [name for name, _ in missing_dependencies(self.temp_dir)]
