@@ -55,8 +55,10 @@ trd: 001-rag-local-de-conocimiento.trd.md
   - Gate: `test_native.py` actualizado para `.aos/.cache/` y suite completa en verde
 - [x] Fase 6: Cierre en `dass-aos`
   - `python -m dass_aos verify` + `python -m dass_aos scan --dry-run` + `aos adapt-native antigravity --yes`
-- [ ] Fase 7: Actualización en proyectos existentes
-  - **Pendiente de confirmación del usuario**: preguntar cuáles proyectos y en qué ramas antes de ejecutar `aos update` / `aos context --reindex`
+- [x] Fase 7: Actualización en proyectos existentes
+  - Extra `[rag]` instalado en modo editable (`pip install -e ".[rag]"`, `fastembed==0.9.1`, `sqlite-vec==0.1.9`)
+  - Actualizados y commiteados en rama `feat/update-dass-aos`: `contable_innotech` (`30e956e`), `builderCenterAWS` (`de3cf9b`), `finDass` (`b0ebed2`)
+  - Actualizado en rama `financiero-qa` (sin commit): `ms-project-ube-itb` (`174` archivos indexados en modo `hybrid`)
 
 ## Registro de Preguntas y Decisiones (Discovery Trail)
 - **Pregunta 1:** ¿Qué fuentes debe indexar el RAG local en la v1?
