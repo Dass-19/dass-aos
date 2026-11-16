@@ -22,7 +22,7 @@ from .constants import (
 
 
 GENERATED_MARKER = "<!-- DASS-AOS-GENERATED"
-ENGINE_DOC_DIRS = ["agents", "skills/specs"]
+ENGINE_DOC_DIRS = ["agents", "skills/specs", "hooks"]
 # Neutral tools_allowed vocabulary; plus shell:<prefix> and mcp:<server> (ADR-004)
 TOOL_VOCABULARY = {"read", "search", "edit", "write", "shell", "web"}
 
@@ -113,7 +113,7 @@ def get_available_skills(project_root: Optional[Path] = None) -> List[str]:
         if not _is_local(p) and (project_root is None or skill_applies(p, project_root))
     }
     # Comandos core del CLI
-    skills |= {"init", "refresh", "verify", "scan", "plan", "sync"}
+    skills |= {"init", "refresh", "context", "verify", "scan", "plan", "sync"}
     return sorted(skills)
 
 
@@ -180,7 +180,7 @@ def build_managed_block(target_file: str, project_root: Path) -> str:
         "",
         "## Ciclo de Vida Obligatorio del Agente",
         "1. **Inicio de Sesión (Session-Start)**: Ejecutar `aos refresh` (o `python -m dass_aos refresh`) para revisar gotchas recientes, especificaciones abiertas (PRD/TRD) y el estado de memoria. Si tu herramienta tiene el hook nativo generado por `adapt-native`, ya se ejecuta solo.",
-        "2. **Pre-Tarea (Pre-Task)**: Consultar `.aos/plans/active/` para tomar la siguiente tarea atómica sin marcar. Si el cambio tiene alcance de producto, comprobar que existen PRD y TRD en `.aos/specs/` (skill `spec-driven`). Revisar `.aos/contracts/` y consultar `codebase-memory` antes de modificar código.",
+        "2. **Pre-Tarea (Pre-Task)**: Consultar `.aos/plans/active/` para tomar la siguiente tarea atómica sin marcar y ejecutar `aos context` para recuperar gotchas, lecciones, ADRs y contratos relacionados. Si el cambio tiene alcance de producto, comprobar que existen PRD y TRD en `.aos/specs/` (skill `spec-driven`). Revisar `.aos/contracts/` y consultar `codebase-memory` antes de modificar código.",
         "3. **En Tarea (In-Task)**: Trabajar en fases atómicas, cada una con su gate. El tamaño se decide por **riesgo** (datos, seguridad, contratos compartidos, concurrencia, entrega) y por lo comprendida que esté la tarea, **nunca por número de archivos**: riesgo alto o alcance transversal → skill `phased-delivery`. Sin un motivo de delegación que puedas nombrar (exploración, escritores en paralelo, backstop de contexto, verificador independiente), trabaja inline, sin subagentes. Nunca inventar endpoints ni esquemas de eventos que no estén formalmente declarados en `.aos/contracts/`.",
         "4. **Post-Tarea (Post-Task)**: Ejecutar `aos verify` (linters/tests) y `aos scan` (Semgrep/Checkov). Si se tocó UI, API, CLI o escritorio, skill `live-verify`: levantar la app, ejercitarla, mirar la evidencia y corregirse (≤3 rondas). Si el cambio tiene riesgo nombrado, skill `adversarial-review` con recibo: congelar el candidato, profundidad 0 / 1 / 4R según riesgo, una sola corrección acotada. `aos doctor` audita el harness (solo diagnóstico). Marcar la tarea completada en el plan con `[x]`, y anotar la lección en `.aos/knowledge/lessons/LEDGER.md` si la hubo.",
         "",
@@ -358,7 +358,10 @@ def ensure_gitignore(project_root: Path) -> None:
     if not ((project_root / ".git").exists() or gitignore.exists()):
         return
     current = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
-    missing = [p for p in (".aos/native/", ".aos/.backups/", ".playwright-cli/") if p not in current.splitlines()]
+    missing = [
+        p for p in (".aos/native/", ".aos/.backups/", ".aos/.cache/", ".playwright-cli/")
+        if p not in current.splitlines()
+    ]
     if missing:
         with gitignore.open("a", encoding="utf-8", newline="") as fh:
             fh.write(("\n" if current and not current.endswith("\n") else "") + "\n".join(missing) + "\n")

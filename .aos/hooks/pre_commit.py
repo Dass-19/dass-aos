@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""DASS-AOS git pre-commit hook (ADR-008).
+"""DASS-AOS git pre-commit hook.
 
 Two independent checks:
 1. `deny_paths` from `.aos/config.json`: refuses to commit secrets (`.env`, keys, `.ssh/`...).
+   A pattern starting with `!` is an exception (`!.env.example`).
    This one runs even when DASS-AOS is not installed in the current Python.
 2. `aos verify`: project linters and tests. Skipped with a message if DASS-AOS is missing,
    so the hook never blocks a commit for a tooling reason.
@@ -52,7 +53,12 @@ def matches(path: str, pattern: str) -> bool:
 
 
 def blocked(files: list[str], patterns: list[str]) -> list[tuple[str, str]]:
-    return [(f, p) for f in files for p in patterns if matches(f, p)]
+    allowed = [p[1:] for p in patterns if p.startswith("!")]
+    denied = [p for p in patterns if not p.startswith("!")]
+    return [
+        (f, p) for f in files for p in denied
+        if matches(f, p) and not any(matches(f, a) for a in allowed)
+    ]
 
 
 def run_verify() -> int:

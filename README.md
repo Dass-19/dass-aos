@@ -66,6 +66,7 @@ El núcleo no tiene dependencias. Las herramientas externas son opcionales; `aos
 |---|---|---|---|
 | Semgrep | SAST (`aos scan`) | Siempre | `pip install "dass-aos[scan]"` o `pip install semgrep`. En Windows nativo está en beta: usa `PYTHONUTF8=1`; si falla, WSL o Docker. |
 | Checkov | IaC, contenedores y pipelines (`aos scan`) | Solo si hay IaC (Terraform, Bicep, Dockerfile, Helm, Kustomize, Serverless, CDK, CI pipelines… ver `applies_when` en `checkov-scan.md`) | `pip install "dass-aos[scan]"` o `pip install checkov` |
+| RAG local (`fastembed` + `sqlite-vec`) | Búsqueda semántica híbrida en `aos context` / `aos refresh` | Opcional (sin él funciona en modo léxico `FTS5`/BM25) | `pip install "dass-aos[rag]"` |
 | codebase-memory | Grafo estructural del código (MCP) | Siempre | Binario `codebase-memory-mcp` en el PATH (ver su repositorio). Indexa cada proyecto en la base de datos del usuario, no en `.aos/`: la primera vez, `index_repository` con la ruta del proyecto |
 | context7 | Documentación actualizada de librerías (MCP); obligatorio para `adapt-native` | Siempre | Servidor remoto `https://mcp.context7.com/mcp`, sin instalación. API key opcional (más rate limit) en context7.com |
 | playwright-cli | Vía web de `live-verify`: el agente abre la app en un navegador sin interfaz, la recorre, captura y lee la consola | Solo si hay frontend web (`package.json` o `*.html` a uno o dos niveles) | `npm install -g @playwright/cli@latest` y una vez `playwright-cli install --skills -g` (skill global de Claude Code). Otras herramientas leen la `SKILL.md` que indica `playwright-cli --help` |
@@ -236,7 +237,9 @@ mi-proyecto/
 | Comando | Función Técnica | Ejecutado por |
 |---|---|---|
 | `aos init [<herramienta>...] [--project-root <ruta>]` | Inicializa `.aos/` para las herramientas indicadas (o detectadas): su archivo de instrucciones y, si tienen generador, sus nativos. Repetirlo con otra herramienta la añade. | Desarrollador |
-| `aos refresh [--gotchas-limit <N>]` | Extrae gotchas recientes, codebase-memory graph status y active task. | Agente (Session-Start) |
+| `aos refresh [--gotchas-limit <N>]` | Extrae gotchas recientes, codebase-memory graph status, active task y contexto RAG relevante. | Agente (Session-Start) |
+| `aos context [<query>] [--kind <tipo>] [--limit N] [--reindex] [--json]` | Recupera chunks relevantes de `.aos/` (RAG híbrido `sqlite-vec` + `FTS5`, o léxico si no está `[rag]`). Sin query usa la siguiente tarea del plan activo. | Agente / Desarrollador |
+| `aos update [--project-root <ruta>]` | Actualiza `.aos/`, plantillas de hooks/skills, `.gitignore` (incluyendo `.aos/.cache/`), instrucciones gestionadas y nativos en proyectos ya inicializados. | Desarrollador |
 | `aos plan new <tipo> --title <título>` | Genera un plan activo a partir de template (`feature`, `bugfix`, `refactor`, `security`). | Agente (Pre-Task) |
 | `aos spec new prd\|trd --title <título>` | Crea `.aos/specs/NNN-<slug>.{prd,trd}.md`; el TRD reutiliza el número del PRD con el mismo título. | Agente (Pre-Task) |
 | `aos status [--json]` | Estado derivado de archivos: `Working`, `Checking`, `Ready` o `Needs decision`. | Agente / Desarrollador |

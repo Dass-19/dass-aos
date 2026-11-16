@@ -11,9 +11,10 @@
    - El estado de la base de datos de grafo de `codebase-memory`.
    - Las especificaciones abiertas (PRD/TRD) en `.aos/specs/`.
    - El plan activo y la siguiente tarea pendiente.
+   - El contexto relevante recuperado automáticamente por `aos context` (RAG local) para la siguiente tarea.
 
-2. **Cargar Contexto Global**  
-   Consultar `.aos/config.json`, `.aos/knowledge/`, `.aos/decisions/` y las lecciones de `.aos/knowledge/lessons/LEDGER.md` para calibrar las normas del proyecto.
+2. **Cargar Contexto Específico (`aos context`)**  
+   Si la tarea toca un dominio concreto, ejecutar `aos context "<tema o módulo>"` para recuperar gotchas, lecciones, ADRs, specs y contratos relacionados antes de abrir archivos. Consultar `.aos/config.json` para calibrar las normas del proyecto.
 
 3. **Requisitos Antes de Código**  
    Si la funcionalidad tiene alcance de producto y no existen `.aos/specs/NNN-<slug>.prd.md` ni su TRD, seguir la skill `spec-driven`. El PRD se cita, no se parafrasea.

@@ -93,3 +93,4 @@ test-client/
 # <<< DASS-AOS adapt-native: claude-code <<<
 .playwright-cli/
 .aos/.backups/
+.aos/.cache/

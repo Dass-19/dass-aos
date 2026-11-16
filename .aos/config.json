@@ -1,6 +1,6 @@
 {
   "project_name": "dass-aos",
-  "aos_version": "0.7.0",
+  "aos_version": "0.8.0",
   "lint_command": "ruff check .",
   "test_command": "python -m unittest discover -b -s tests -p \"test_*.py\"",
   "migration_command": null,

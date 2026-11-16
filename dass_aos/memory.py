@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from .constants import AOS_DIR_NAME, configure_utf8_output
+from .rag import search_context
 from .scanners import check_tool_installed, checkov_applies
 from .specs import open_specs
 from .native.manifest import native_status
@@ -230,6 +231,18 @@ def run_memory_refresh(project_root: Path, gotchas_limit: int = 5) -> str:
         lines.extend(f"- Falta `{name}`: {hint}" for name, hint in missing)
     else:
         lines.append("- Todas las dependencias que aplican están instaladas.")
+
+    lines.extend(["", "## 8. Contexto Relevante (RAG)"])
+    if plan_info and not plan_info[1].startswith("(no hay tareas"):
+        ctx = search_context(project_root, query=plan_info[1], exclude_kinds=("plan",), limit=3)
+        lines.append(f"- Modo: `{ctx.mode}` · Consulta: `{ctx.query}`")
+        if ctx.results:
+            for hit in ctx.results:
+                lines.append(f"- **[{hit.kind.upper()}] {hit.title}** › _{hit.section}_ (`{hit.path}`): {hit.snippet}")
+        else:
+            lines.append("- Sin coincidencias específicas en `.aos/` para esta tarea.")
+    else:
+        lines.append("- Ejecuta `aos context \"<tema>\"` antes de modificar código para recuperar gotchas, ADRs, specs y contratos relacionados.")
 
     lines.extend([
         "",

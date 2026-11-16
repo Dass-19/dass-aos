@@ -23,7 +23,7 @@ created: 2026-10-16
 
 > Los fallos que las pruebas no ven suelen estar en las costuras: un campo que se pinta pero no viaja, un permiso que solo existe en el botón, un secreto que acaba en un log. Esta revisión los busca con un revisor por lente y descarta los falsos positivos antes de tocar nada.
 >
-> **La revisión pertenece a una versión concreta del código.** Por eso lo primero no es leer: es congelar el candidato. Lo que se revisa después es exactamente lo que se entrega (ADR-008).
+> **La revisión pertenece a una versión concreta del código.** Por eso lo primero no es leer: es congelar el candidato. Lo que se revisa después es exactamente lo que se entrega.
 
 ## 0. Recibo: congelar el candidato
 

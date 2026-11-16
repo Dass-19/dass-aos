@@ -22,10 +22,10 @@ updated: 2026-10-06
 
 # Skill: adapt-native
 
-> **Claude Code y Antigravity tienen generador determinista: ejecuta `aos adapt-native <tool> --yes` y no sigas esta skill** (ADR-005). Esta skill es el respaldo para el resto de herramientas y para investigar un cambio de formato antes de actualizar un adaptador.
+> **Claude Code y Antigravity tienen generador determinista: ejecuta `aos adapt-native <tool> --yes` y no sigas esta skill**. Esta skill es el respaldo para el resto de herramientas y para investigar un cambio de formato antes de actualizar un adaptador.
 >
 > La ejecuta **el agente de la herramienta en uso** (no el CLI) cuando no existe `.aos/native/<tool>.json` o `aos refresh` / `aos sync` lo marcan como DESACTUALIZADO.
-> Decisión y vocabulario en ADR-004. `.aos/` es la única fuente de verdad: lo generado aquí es desechable y regenerable.
+> `.aos/` es la única fuente de verdad: lo generado aquí es desechable y regenerable.
 
 ## 1. Identificar la herramienta
 Determina en qué herramienta corres (y su versión si es posible). Usa un identificador kebab-case estable para `<tool>`.
@@ -47,7 +47,7 @@ Lee siempre la versión renderizada (base + `<nombre>.local.md`).
 | `.aos/mcp-config.json` | servidores MCP nativos. `{"command","args","env"}` = local; `{"url"}` = remoto (traduce la clave: `type: http` + `url`, `serverUrl`, etc.) |
 | `.aos/hooks/session-start.md` | hook de inicio de sesión que ejecute `aos refresh`, con fallback `python -m dass_aos refresh`, **nunca bloqueante** y sin depender del PATH. Si la herramienta no tiene evento de inicio, no lo simules con eventos por llamada: déjalo como convención |
 
-### Traducción de `tools_allowed` (vocabulario neutral, ADR-004)
+### Traducción de `tools_allowed` (vocabulario neutral)
 `read`, `search`, `edit`, `write`, `shell`, `shell:<prefijo>`, `web`, `mcp:<servidor>`.
 - Mapea cada valor a los **nombres nativos exactos** que documenta la herramienta. Nunca copies el vocabulario neutral tal cual (`mcp:context7`, `search`) en un campo nativo; si un valor no tiene equivalente documentado, déjalo como texto y regístralo como `convention`. Para MCP usa el mecanismo nativo (nombre de herramienta MCP, campo de servidores MCP del agente, etc.). `shell:<prefijo>` → la forma nativa de restringir comandos si existe; si no, `shell` + la restricción como texto en el cuerpo del subagente.
 - Cuidado: en algunas herramientas una lista de permitidas **excluye los MCP no listados**. Inclúyelos explícitamente o, si la herramienta tiene lista de bloqueo (p. ej. `disallowedTools`), bloquea solo el complemento cuando sea equivalente.

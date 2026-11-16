@@ -11,6 +11,7 @@ from .generator import generate_client
 from .doctor import run_doctor
 from .memory import run_memory_refresh
 from .plans import create_new_plan
+from .rag import run_context
 from .scanners import run_security_scans
 from .specs import SPEC_KINDS, create_new_spec
 from .status import run_status
@@ -124,6 +125,15 @@ def build_parser() -> argparse.ArgumentParser:
     # 11. update
     update_p = subparsers.add_parser("update", help="Upgrade project .aos/ state, templates, hooks, and skills to current DASS-AOS version")
     update_p.add_argument("--project-root", default=".", help="Project root directory (default: current directory)")
+
+    # 12. context
+    ctx_p = subparsers.add_parser("context", help="Retrieve relevant .aos/ knowledge for a query or active task")
+    ctx_p.add_argument("query", nargs="?", default=None, help="Search query (defaults to next pending task in active plan)")
+    ctx_p.add_argument("--project-root", default=".", help="Project root directory (default: current directory)")
+    ctx_p.add_argument("--kind", choices=["gotcha", "lesson", "decision", "spec", "contract", "plan"], default=None, help="Filter by artifact kind")
+    ctx_p.add_argument("--limit", type=int, default=5, help="Maximum chunks to return (default: 5)")
+    ctx_p.add_argument("--reindex", action="store_true", help="Force full rebuild of .aos/.cache/context.db")
+    ctx_p.add_argument("--json", action="store_true", help="Machine-readable JSON output")
 
     return parser
 
@@ -278,6 +288,18 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "update":
             root = Path(args.project_root).resolve()
             return run_update(root)
+
+        elif args.command == "context":
+            root = Path(args.project_root).resolve()
+            run_context(
+                root,
+                query=args.query,
+                kind=args.kind,
+                limit=args.limit,
+                reindex=args.reindex,
+                as_json=args.json,
+            )
+            return 0
 
     except Exception as exc:
         print(f"[aos ERROR]: {exc}", file=sys.stderr)

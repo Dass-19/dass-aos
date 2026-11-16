@@ -1,29 +1,29 @@
 # CLAUDE.md — Instrucciones del Proyecto
 
 <!-- DASS-AOS-MANAGED-START -->
-# Instrucciones Gestionadas por DASS-AOS (v0.7.0)
+# Instrucciones Gestionadas por DASS-AOS (v0.8.0)
 
 > **Raíz del Estado del Proyecto**: `.aos/`
 > Todas las reglas, planes activos, contratos, decisiones y trampas (gotchas) se almacenan localmente en `.aos/`.
 
 ## Ciclo de Vida Obligatorio del Agente
 1. **Inicio de Sesión (Session-Start)**: Ejecutar `aos refresh` (o `python -m dass_aos refresh`) para revisar gotchas recientes, especificaciones abiertas (PRD/TRD) y el estado de memoria. Si tu herramienta tiene el hook nativo generado por `adapt-native`, ya se ejecuta solo.
-2. **Pre-Tarea (Pre-Task)**: Consultar `.aos/plans/active/` para tomar la siguiente tarea atómica sin marcar. Si el cambio tiene alcance de producto, comprobar que existen PRD y TRD en `.aos/specs/` (ADR-007; skill `spec-driven`). Revisar `.aos/contracts/` y consultar `codebase-memory` antes de modificar código.
-3. **En Tarea (In-Task)**: Trabajar en fases atómicas, cada una con su gate. El tamaño se decide por **riesgo** (datos, seguridad, contratos compartidos, concurrencia, entrega) y por lo comprendida que esté la tarea, **nunca por número de archivos** (ADR-008): riesgo alto o alcance transversal → skill `phased-delivery`. Sin un motivo de delegación que puedas nombrar (exploración, escritores en paralelo, backstop de contexto, verificador independiente), trabaja inline, sin subagentes. Nunca inventar endpoints ni esquemas de eventos que no estén formalmente declarados en `.aos/contracts/`.
-4. **Post-Tarea (Post-Task)**: Ejecutar `aos verify` (linters/tests) y `aos scan` (Semgrep/Checkov). Si se tocó UI, API, CLI o escritorio, skill `live-verify`: levantar la app, ejercitarla, mirar la evidencia y corregirse (≤3 rondas). Si el cambio tiene riesgo nombrado, skill `adversarial-review` con recibo (ADR-008): congelar el candidato, profundidad 0 / 1 / 4R según riesgo, una sola corrección acotada. `aos doctor` audita el harness (solo diagnóstico). Marcar la tarea completada en el plan con `[x]`, y anotar la lección en `.aos/knowledge/lessons/LEDGER.md` si la hubo.
+2. **Pre-Tarea (Pre-Task)**: Consultar `.aos/plans/active/` para tomar la siguiente tarea atómica sin marcar y ejecutar `aos context` para recuperar gotchas, lecciones, ADRs y contratos relacionados. Si el cambio tiene alcance de producto, comprobar que existen PRD y TRD en `.aos/specs/` (skill `spec-driven`). Revisar `.aos/contracts/` y consultar `codebase-memory` antes de modificar código.
+3. **En Tarea (In-Task)**: Trabajar en fases atómicas, cada una con su gate. El tamaño se decide por **riesgo** (datos, seguridad, contratos compartidos, concurrencia, entrega) y por lo comprendida que esté la tarea, **nunca por número de archivos**: riesgo alto o alcance transversal → skill `phased-delivery`. Sin un motivo de delegación que puedas nombrar (exploración, escritores en paralelo, backstop de contexto, verificador independiente), trabaja inline, sin subagentes. Nunca inventar endpoints ni esquemas de eventos que no estén formalmente declarados en `.aos/contracts/`.
+4. **Post-Tarea (Post-Task)**: Ejecutar `aos verify` (linters/tests) y `aos scan` (Semgrep/Checkov). Si se tocó UI, API, CLI o escritorio, skill `live-verify`: levantar la app, ejercitarla, mirar la evidencia y corregirse (≤3 rondas). Si el cambio tiene riesgo nombrado, skill `adversarial-review` con recibo: congelar el candidato, profundidad 0 / 1 / 4R según riesgo, una sola corrección acotada. `aos doctor` audita el harness (solo diagnóstico). Marcar la tarea completada en el plan con `[x]`, y anotar la lección en `.aos/knowledge/lessons/LEDGER.md` si la hubo.
 
-## Adaptación Nativa (ADR-004, ADR-005)
+## Adaptación Nativa
 Si no existe `.aos/native/<tu-herramienta>.json` o `aos refresh` lo marca DESACTUALIZADO: con generador (`antigravity`, `claude-code`) ejecuta `aos adapt-native <tu-herramienta> --yes`; con cualquier otra herramienta, la skill `adapt-native` (`.aos/skills/specs/adapt-native.md`). Generan tus subagentes, skills, hooks y MCP nativos desde `.aos/`.
 
 ## Roles Especializados Disponibles
 `adversarial-verifier`, `app-builder`, `architect`, `qa-tester`, `refactorer`, `reviewer`, `security-auditor`
 
 ## Skills y Comandos Principales Disponibles
-`adapt-native`, `adversarial-review`, `api-smoke-test`, `bootstrap-project`, `generate-client`, `git-atomic-commit`, `init`, `live-verify`, `memory-refresh`, `phased-delivery`, `plan`, `refresh`, `scan`, `semgrep-scan`, `spec-driven`, `sync`, `sync-agent-instructions`, `verify`
+`adapt-native`, `adversarial-review`, `api-smoke-test`, `bootstrap-project`, `checkov-scan`, `context`, `generate-client`, `git-atomic-commit`, `init`, `live-verify`, `memory-refresh`, `phased-delivery`, `plan`, `refresh`, `scan`, `semgrep-scan`, `spec-driven`, `sync`, `sync-agent-instructions`, `verify`
 
 ## Contratos y Codebase Memory
 - **Contratos**: Consulta `.aos/contracts/http/`, `.aos/contracts/events/` y `.aos/contracts/schemas/`.
-- **Especificaciones**: Consulta `.aos/specs/` (`NNN-<slug>.prd.md` y `NNN-<slug>.trd.md`). La spec se cita, nunca se parafrasea (ADR-007).
+- **Especificaciones**: Consulta `.aos/specs/` (`NNN-<slug>.prd.md` y `NNN-<slug>.trd.md`). La spec se cita, nunca se parafrasea.
 - **Codebase Memory**: Consulta el grafo estructural (`search_graph`/`query_graph`) antes de alterar arquitecturas cruzadas.
 - **Trampas (Gotchas)**: Documenta nuevos aprendizajes y trampas en `.aos/knowledge/gotchas/<nombre>.md`.
 - **Lecciones**: Las lecciones con evidencia van a `.aos/knowledge/lessons/LEDGER.md` (fecha · artefacto · evidencia · efecto).
