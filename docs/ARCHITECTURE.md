@@ -142,7 +142,24 @@ El eje de decisión dejó de ser el número de archivos:
 
 ---
 
-## 9. Registro Histórico de ADRs
+## 9. TUI y Telemetría Local (ADR-010)
+
+- **Dos capas**: `dass_aos/telemetry.py` agrega el estado (`.aos/`, Git, sesiones y tasks de Claude
+  Code y Antigravity, consumo de tokens) solo con la biblioteca estándar, y es testeable sin extras.
+  `dass_aos/tui/` es la presentación con Textual (extra `[tui]`), importada solo al ejecutar `aos tui`.
+- **Solo lectura**: la telemetría nunca escribe en `~/.claude/` ni en `~/.gemini/antigravity/`; abre
+  la base de Antigravity en modo `ro` y tolera JSONL truncados o escritos a la vez.
+- **Atribución por proyecto**: Claude Code se empareja por el `<slug>` de la ruta (todo carácter no
+  alfanumérico → `-`) e incluye los transcripts de subagentes; Antigravity, por `workspace_uris` en
+  `conversation_summaries.db`, con la búsqueda de la ruta en el texto solo como respaldo. Los tokens
+  se suman sobre todas las sesiones y se deduplican por `message.id:requestId`. Detalle y causa raíz:
+  gotcha `tokens-por-proyecto-atribucion.md`.
+- **Lectura incremental**: los JSONL se leen desde el último offset en bytes, así que un refresco solo
+  procesa las líneas nuevas.
+
+---
+
+## 10. Registro Histórico de ADRs
 - [ADR-001: Plantilla de Architecture Decision Record](../dass_aos/templates/decisions/ADR-001-plantilla.md)
 - [ADR-002: Arquitectura Híbrida CLI y Estado Local (.aos/)](../.aos/decisions/ADR-002-hibrido-cli-estado-local.md)
 - [ADR-003: Base genérica del motor + agregados locales](../.aos/decisions/ADR-003-base-motor-agregados-locales.md)
@@ -151,3 +168,5 @@ El eje de decisión dejó de ser el número de archivos:
 - [ADR-006: Flujo de entrega en el motor](../.aos/decisions/ADR-006-flujo-de-entrega-del-motor.md)
 - [ADR-007: Capa de requisitos (PRD → TRD) y grafo de código por defecto](../.aos/decisions/ADR-007-capa-de-requisitos-y-grafo-de-codigo.md)
 - [ADR-008: Enrutado por riesgo y revisión con recibo](../.aos/decisions/ADR-008-enrutado-por-riesgo-y-revision-con-recibo.md)
+- [ADR-009: RAG local de conocimiento (SQLite FTS5 + fastembed)](../.aos/decisions/ADR-009-rag-local-conocimiento-sqlite-fastembed.md)
+- [ADR-010: TUI opcional con Textual y telemetría local read-only](../.aos/decisions/ADR-010-tui-opcional-textual-y-telemetria-local.md)

@@ -182,6 +182,31 @@ aos status --json     # lo mismo, para scripts y hooks
 
 `aos status` deriva el estado de los archivos, no del criterio de un modelo: pregunta registrada sin respuesta o siguiente fase de requisitos → `Needs decision`; siguiente fase de implementación → `Working`; de verificación → `Checking`; sin fases pendientes (o sin plan activo) → `Ready`.
 
+## 5.4 Monitor en tiempo real (`aos tui`)
+
+```bash
+pip install "dass-aos[tui]"   # Textual, Python ≥ 3.9
+aos tui [--interval 1.5]
+```
+
+Vista de solo lectura de `.aos/`, Git y las sesiones de agentes del proyecto.
+
+| Tecla | Pestaña | Contenido |
+|---|---|---|
+| `1` | Resumen | Plan activo, sesiones y tasks, actividad, gotchas |
+| `2` | Planes & Specs | Planes, PRD/TRD y ADRs |
+| `3` | Agentes & Tasks | Sesiones Claude Code (CC) / Antigravity (AG), timeline, logs de tasks |
+| `4` | Git & Diff | Cambios, commits, diff (`.md` renderizado) |
+| `5` | RAG & Salud | `aos context` (`/`), `aos doctor`, gotchas, nativos |
+| `6` | Consola | `aos verify` (`v`), `scan` (`s`), `sync` (`y`), `refresh` (`f`) |
+| `7` | Tokens | Input, cache, output, contexto y coste por categoría, tool y sesión |
+
+`z` zoom · `space` pausa · `r` refresca · `?` ayuda · `q` sale.
+
+Atribución al proyecto (solo archivos locales):
+- **Claude Code**: `~/.claude/projects/<slug>/*.jsonl` y `<sesión>/subagents/*.jsonl`; `<slug>` = ruta con todo carácter no alfanumérico → `-`. Deduplicado por `message.id:requestId`.
+- **Antigravity**: `workspace_uris` de `~/.gemini/antigravity/conversation_summaries.db`; respaldo: ruta en el transcript.
+
 ---
 
 ## 6. Estructura
@@ -246,7 +271,7 @@ mi-proyecto/
 | `aos plan new <tipo> --title <título>` | Genera un plan activo a partir de template (`feature`, `bugfix`, `refactor`, `security`). | Agente (Pre-Task) |
 | `aos spec new prd\|trd --title <título>` | Crea `.aos/specs/NNN-<slug>.{prd,trd}.md`; el TRD reutiliza el número del PRD con el mismo título. | Agente (Pre-Task) |
 | `aos status [--json]` | Estado derivado de archivos: `Working`, `Checking`, `Ready` o `Needs decision`. | Agente / Desarrollador |
-| `aos tui [--project-root <ruta>] [--interval <seg>]` | Lanza la TUI interactiva en tiempo real (planes, agentes Claude/Antigravity, tasks, Git, RAG y runner). Requiere `[tui]`. | Desarrollador |
+| `aos tui [--project-root <ruta>] [--interval <seg>]` | Lanza la TUI interactiva en tiempo real (planes, agentes Claude/Antigravity, tasks, Git, RAG, consola y tokens del proyecto). Requiere `[tui]`. Ver §5.4. | Desarrollador |
 | `aos doctor [--strict]` | Audita el harness cargado contra lo que declara `.aos/`. Solo lectura; ningún hook lo ejecuta. | Agente / Desarrollador |
 | `aos verify [--type lint\|test\|migration] [--strict]` | Ejecuta linters, test suites y migrations (configurados o autodetectados). Omite herramientas no instaladas salvo con `--strict`. | Agente (Post-Task) |
 | `aos scan [--tool semgrep\|checkov] [--dry-run]` | Ejecuta SAST (Semgrep) e IaC (Checkov, solo si hay IaC o con `--tool checkov`) con modo dry-run local. | Agente (Post-Task) |

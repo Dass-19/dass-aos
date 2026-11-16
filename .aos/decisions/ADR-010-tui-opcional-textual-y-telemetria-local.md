@@ -19,7 +19,7 @@ Al mismo tiempo, el núcleo de `dass-aos` (`ADR-002`, `ADR-009`, `pyproject.toml
 2. **Separación entre telemetría stdlib y presentación**:
    - `dass_aos/telemetry.py` concentra la agregación de estado `.aos/`, Git, sesiones/tareas de Claude Code y Antigravity y detección de eventos delta usando exclusivamente la biblioteca estándar de Python (`>=3.8`), siendo reutilizable y 100% testeable en CI sin `[tui]`.
 3. **Observabilidad estrictamente read-only y defensiva sobre herramientas de IA**:
-   - La lectura de `~/.claude/` y `~/.gemini/antigravity/brain/` nunca escribe ni bloquea archivos de las herramientas externas, tolera JSON/JSONL truncados o concurrentes y filtra las sesiones por `project_root`.
+   - La lectura de `~/.claude/` y `~/.gemini/antigravity/brain/` nunca escribe ni bloquea archivos de las herramientas externas, tolera JSON/JSONL truncados o concurrentes y filtra las sesiones por `project_root`: en Antigravity, por el workspace registrado en `conversation_summaries.db`, no por menciones de la ruta en el texto (ver gotcha `tokens-por-proyecto-atribucion.md`).
 
 ## Consecuencias
 - **Positivas**: Cero impacto en instalaciones mínimas de `dass-aos` y compatibilidad intacta con Python 3.8 en el núcleo; UI interactiva moderna (paneles, scroll, búsqueda, workers asíncronos y soporte de ratón/teclado en Windows, Linux y macOS) cuando se instala `[tui]`.
