@@ -12,6 +12,9 @@
 3. **En Tarea (In-Task)**: Trabajar en fases atómicas, cada una con su gate. El tamaño se decide por **riesgo** (datos, seguridad, contratos compartidos, concurrencia, entrega) y por lo comprendida que esté la tarea, **nunca por número de archivos**: riesgo alto o alcance transversal → skill `phased-delivery`. Sin un motivo de delegación que puedas nombrar (exploración, escritores en paralelo, backstop de contexto, verificador independiente), trabaja inline, sin subagentes. Nunca inventar endpoints ni esquemas de eventos que no estén formalmente declarados en `.aos/contracts/`.
 4. **Post-Tarea (Post-Task)**: Ejecutar `aos verify` (linters/tests) y `aos scan` (Semgrep/Checkov). Si se tocó UI, API, CLI o escritorio, skill `live-verify`: levantar la app, ejercitarla, mirar la evidencia y corregirse (≤3 rondas). Si el cambio tiene riesgo nombrado, skill `adversarial-review` con recibo: congelar el candidato, profundidad 0 / 1 / 4R según riesgo, una sola corrección acotada. `aos doctor` audita el harness (solo diagnóstico). Marcar la tarea completada en el plan con `[x]`, y anotar la lección en `.aos/knowledge/lessons/LEDGER.md` si la hubo.
 
+## Monitoreo para el Usuario
+Al empezar una sesión o una tarea de varias fases, sugiere una vez al usuario abrir `aos tui` en otra terminal para seguir tu avance en tiempo real: plan y fases, sesiones y tasks (pestaña 3), diff (4), salida de verify/scan (6) y tokens del proyecto (7). Si no tiene Textual: `pip install "dass-aos[tui]"`. No lo repitas en cada mensaje.
+
 ## Adaptación Nativa
 Si no existe `.aos/native/<tu-herramienta>.json` o `aos refresh` lo marca DESACTUALIZADO: con generador (`antigravity`, `claude-code`) ejecuta `aos adapt-native <tu-herramienta> --yes`; con cualquier otra herramienta, la skill `adapt-native` (`.aos/skills/specs/adapt-native.md`). Generan tus subagentes, skills, hooks y MCP nativos desde `.aos/`.
 
