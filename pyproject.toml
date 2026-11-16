@@ -39,6 +39,7 @@ classifiers = [
 [project.optional-dependencies]
 scan = ["semgrep", "checkov"]
 rag = ["fastembed>=0.3", "sqlite-vec>=0.1"]
+tui = ["textual>=0.70"]
 
 [project.scripts]
 aos = "dass_aos.cli:main"
@@ -48,7 +49,7 @@ where = ["."]
 include = ["dass_aos*"]
 
 [tool.setuptools.package-data]
-dass_aos = ["templates/**/*"]
+dass_aos = ["templates/**/*", "tui/*.tcss"]
 
 [tool.ruff]
 line-length = 120

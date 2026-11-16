@@ -67,6 +67,7 @@ El núcleo no tiene dependencias. Las herramientas externas son opcionales; `aos
 | Semgrep | SAST (`aos scan`) | Siempre | `pip install "dass-aos[scan]"` o `pip install semgrep`. En Windows nativo está en beta: usa `PYTHONUTF8=1`; si falla, WSL o Docker. |
 | Checkov | IaC, contenedores y pipelines (`aos scan`) | Solo si hay IaC (Terraform, Bicep, Dockerfile, Helm, Kustomize, Serverless, CDK, CI pipelines… ver `applies_when` en `checkov-scan.md`) | `pip install "dass-aos[scan]"` o `pip install checkov` |
 | RAG local (`fastembed` + `sqlite-vec`) | Búsqueda semántica híbrida en `aos context` / `aos refresh` | Opcional (sin él funciona en modo léxico `FTS5`/BM25) | `pip install "dass-aos[rag]"` |
+| TUI en tiempo real (`textual`) | Monitor interactivo en terminal (`aos tui`) de `.aos/`, Git, Claude Code y Antigravity | Opcional (requiere Python ≥ 3.9) | `pip install "dass-aos[tui]"` |
 | codebase-memory | Grafo estructural del código (MCP) | Siempre | Binario `codebase-memory-mcp` en el PATH (ver su repositorio). Indexa cada proyecto en la base de datos del usuario, no en `.aos/`: la primera vez, `index_repository` con la ruta del proyecto |
 | context7 | Documentación actualizada de librerías (MCP); obligatorio para `adapt-native` | Siempre | Servidor remoto `https://mcp.context7.com/mcp`, sin instalación. API key opcional (más rate limit) en context7.com |
 | playwright-cli | Vía web de `live-verify`: el agente abre la app en un navegador sin interfaz, la recorre, captura y lee la consola | Solo si hay frontend web (`package.json` o `*.html` a uno o dos niveles) | `npm install -g @playwright/cli@latest` y una vez `playwright-cli install --skills -g` (skill global de Claude Code). Otras herramientas leen la `SKILL.md` que indica `playwright-cli --help` |
@@ -201,6 +202,8 @@ dass-aos/ (motor)
 │   ├── specs.py               aos spec new (PRD/TRD)
 │   ├── doctor.py              aos doctor (auditoría del harness, solo lectura)
 │   ├── status.py              aos status (estado derivado de archivos)
+│   ├── telemetry.py           Agregador read-only (.aos/, Git, Claude Code, Antigravity)
+│   ├── tui/                   aos tui (interfaz Textual opcional)
 │   ├── backup.py              snapshot antes de reescribir un archivo
 │   └── templates/             Todo lo que `aos init` copia a .aos/ (misma estructura)
 ├── docs/
@@ -243,6 +246,7 @@ mi-proyecto/
 | `aos plan new <tipo> --title <título>` | Genera un plan activo a partir de template (`feature`, `bugfix`, `refactor`, `security`). | Agente (Pre-Task) |
 | `aos spec new prd\|trd --title <título>` | Crea `.aos/specs/NNN-<slug>.{prd,trd}.md`; el TRD reutiliza el número del PRD con el mismo título. | Agente (Pre-Task) |
 | `aos status [--json]` | Estado derivado de archivos: `Working`, `Checking`, `Ready` o `Needs decision`. | Agente / Desarrollador |
+| `aos tui [--project-root <ruta>] [--interval <seg>]` | Lanza la TUI interactiva en tiempo real (planes, agentes Claude/Antigravity, tasks, Git, RAG y runner). Requiere `[tui]`. | Desarrollador |
 | `aos doctor [--strict]` | Audita el harness cargado contra lo que declara `.aos/`. Solo lectura; ningún hook lo ejecuta. | Agente / Desarrollador |
 | `aos verify [--type lint\|test\|migration] [--strict]` | Ejecuta linters, test suites y migrations (configurados o autodetectados). Omite herramientas no instaladas salvo con `--strict`. | Agente (Post-Task) |
 | `aos scan [--tool semgrep\|checkov] [--dry-run]` | Ejecuta SAST (Semgrep) e IaC (Checkov, solo si hay IaC o con `--tool checkov`) con modo dry-run local. | Agente (Post-Task) |

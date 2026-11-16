@@ -19,6 +19,7 @@ from .native import ADAPTERS, get_adapter
 from .native.antigravity import refresh_hook
 from .native.manifest import native_source_hash
 from .sync import sync_all_instructions
+from .tui import run_tui
 from .ui import Card, bold, cyan, dim, green, red, yellow
 from .update import run_update
 from .verifier import run_verification
@@ -134,6 +135,11 @@ def build_parser() -> argparse.ArgumentParser:
     ctx_p.add_argument("--limit", type=int, default=5, help="Maximum chunks to return (default: 5)")
     ctx_p.add_argument("--reindex", action="store_true", help="Force full rebuild of .aos/.cache/context.db")
     ctx_p.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+
+    # 13. tui
+    tui_p = subparsers.add_parser("tui", help="Launch real-time interactive TUI dashboard for .aos/, Git, and agents")
+    tui_p.add_argument("--project-root", default=".", help="Project root directory (default: current directory)")
+    tui_p.add_argument("--interval", type=float, default=1.5, help="Auto-refresh interval in seconds (default: 1.5)")
 
     return parser
 
@@ -300,6 +306,10 @@ def main(argv: list[str] | None = None) -> int:
                 as_json=args.json,
             )
             return 0
+
+        elif args.command == "tui":
+            root = Path(args.project_root).resolve()
+            return run_tui(root, interval=args.interval)
 
     except Exception as exc:
         print(f"[aos ERROR]: {exc}", file=sys.stderr)
