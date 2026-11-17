@@ -1,7 +1,7 @@
 ---
 id: 202611160856
 type: plan
-status: active
+status: completed
 priority: medium
 tags: [plan/feature, rag, memory]
 created: 2026-11-16

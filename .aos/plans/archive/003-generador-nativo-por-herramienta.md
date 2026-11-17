@@ -1,7 +1,7 @@
 ---
 id: 202610061905
 type: plan
-status: active
+status: completed
 priority: high
 tags: [plan/feature]
 created: 2026-10-06
@@ -89,7 +89,7 @@ created: 2026-10-06
   - La skill `adapt-native.md` (template y `.aos/`) empieza remitiendo al comando para `claude-code` y `antigravity`.
   - Sale del plan 002 la subtarea de conformidad de `aos refresh`: con el generador no hace falta para las herramientas con adaptador.
   - Tests: el bloque y el mensaje incluyen el comando.
-- [ ] Fase 6: Prueba real y gotchas. (Claude Code y gotchas hechos; queda la sesión manual de Antigravity, ver Bloqueos)
+- [x] Fase 6: Prueba real y gotchas. (Claude Code y gotchas hechos; la sesión manual de Antigravity queda en Bloqueos como comprobación pendiente, cerrado a petición del usuario 2026-11-16)
   - Claude Code:
     - `aos adapt-native claude-code` → subagentes visibles con las herramientas limitadas;
     - el hook ejecuta `aos refresh` en sesión nueva;
