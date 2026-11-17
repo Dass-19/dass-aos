@@ -1,7 +1,7 @@
 # CLAUDE.md — Instrucciones del Proyecto
 
 <!-- DASS-AOS-MANAGED-START -->
-# Instrucciones Gestionadas por DASS-AOS (v0.8.0)
+# Instrucciones Gestionadas por DASS-AOS (v0.9.0)
 
 > **Raíz del Estado del Proyecto**: `.aos/`
 > Todas las reglas, planes activos, contratos, decisiones y trampas (gotchas) se almacenan localmente en `.aos/`.
