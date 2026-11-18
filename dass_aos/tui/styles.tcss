@@ -284,14 +284,67 @@ Screen.theme-violet Tab.-active {
 }
 
 #agents-session-summary {
-    padding: 0 0 1 0;
+    height: auto;
+    max-height: 6;
+    padding: 0;
     border-bottom: solid $line;
-    margin-bottom: 1;
+    overflow: hidden hidden;
+}
+
+#agent-terminal-pane, #zoom-terminal-pane {
+    height: 1fr;
+    min-height: 12;
+    background: #080f1a;
+    color: #e2e8f0;
+    padding: 0 1;
+    overflow: hidden hidden;
+}
+
+#agent-terminal-pane:focus, #zoom-terminal-pane:focus {
+    background: #0a1424;
 }
 
 #agents-log-box {
     height: 1fr;
+    margin-bottom: 1;
 }
+
+#agent-composer-row {
+    height: 3;
+    layout: horizontal;
+    align: left middle;
+}
+
+#agent-prompt-input {
+    width: 1fr;
+    min-width: 18;
+    margin-right: 1;
+    background: #060b11;
+    border: round $gold;
+}
+
+#agent-prompt-input:focus {
+    border: round $gold-l;
+}
+
+#agent-composer-row Button {
+    min-width: 5;
+    width: auto;
+    height: 3;
+    padding: 0;
+    margin-right: 0;
+    background: #060b11;
+    border: round $line;
+    color: #e2e8f0;
+    text-style: bold;
+}
+
+#agent-composer-row #btn-agent-attach { border: round $gold; color: $gold-l; }
+#agent-composer-row #btn-agent-graph { border: round #7c5cbf; color: #a78bfa; }
+#agent-composer-row #btn-agent-view { border: round $blue; color: $blue-l; }
+#agent-composer-row #btn-agent-new { border: round $blue; color: $blue-l; }
+#agent-composer-row #btn-agent-voice { border: round $olive; color: $olive-l; }
+#agent-composer-row #btn-agent-stop { border: round $terra; color: $terra-l; margin-right: 0; }
 
 #git-files-box {
     height: 2fr;

@@ -7,7 +7,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from rich.markdown import Markdown as RichMarkdown
 from rich.text import Text
@@ -32,6 +32,7 @@ from textual.widgets import (
 from ..constants import VERSION
 from ..rag import search_context
 from ..telemetry import (
+    AgentActivityItem,
     AgentSessionInfo,
     AgentTaskInfo,
     LiveEvent,
@@ -40,6 +41,8 @@ from ..telemetry import (
     diff_snapshots,
     read_git_file_diff,
 )
+from .controller import AlertDispatcher, SessionController
+from .pty_terminal import AgentTerminalWidget, PtySession, detect_terminal_agent_state
 from .widgets import (
     brand_lockup,
     agent_badge,
@@ -64,6 +67,9 @@ from .widgets import (
     format_live_event,
     format_pulse_and_distribution,
     format_session_detail_summary,
+    format_subagent_graph,
+    format_task_datetime,
+    format_task_log_header,
     format_tokens_compact,
     token_bar,
 )
@@ -94,9 +100,14 @@ class HelpScreen(ModalScreen[None]):
                 "- `1`..`7` — Cambiar entre Resumen, Planes, Agentes, Git, RAG/Salud, Consola y Tokens\n"
                 "- `↑` / `↓` — Mover cursor en tablas (actualiza vista previa al instante)\n"
                 "- `/` — Saltar al buscador RAG (`aos context`)\n\n"
-                "### Control en Vivo (estilo Gonzo)\n"
+                "### Control en Vivo y Sesiones (estilo Herdr)\n"
                 "- `Espacio` — Pausar / reanudar el refresco automático en tiempo real\n"
                 "- `z` — Maximizar (zoom) el panel activo (`Esc` para salir)\n"
+                "- `g` — Ver Grafo de Subagentes e interacciones en vivo (en pestaña 3 · Agentes)\n"
+                "- `m` — Silenciar / activar alertas sonoras y notificaciones del SO (`PENDING`)\n"
+                "- `n` — Crear nueva sesión con nombre (en pestaña 3 · Agentes)\n"
+                "- `k` — Detener sesión/proceso activo (en pestaña 3 · Agentes)\n"
+                "- `Esc` — Cortar locución de voz (TTS) en curso\n"
                 "- `r` — Forzar refresco completo (incluye `aos doctor`)\n"
                 "- `t` — Cambiar tema visual (`Cyan` · `Emerald` · `Violet`)\n\n"
                 "### Acciones del Motor\n"
@@ -107,7 +118,7 @@ class HelpScreen(ModalScreen[None]):
 
 
 class ZoomScreen(ModalScreen[None]):
-    """Fullscreen reader modal (`z`) for logs, diffs, docs, or activity feeds."""
+    """Fullscreen reader or interactive PTY modal (`z`) for logs, diffs, docs, or live CLI terminals."""
 
     BINDINGS = [
         Binding("escape", "dismiss", "Cerrar"),
@@ -115,21 +126,44 @@ class ZoomScreen(ModalScreen[None]):
         Binding("q", "dismiss", "Cerrar"),
     ]
 
-    def __init__(self, title: str, content: Any, is_markdown: bool = False) -> None:
+    def __init__(
+        self,
+        title: str,
+        content: Any,
+        is_markdown: bool = False,
+        pty_session: Optional[PtySession] = None,
+    ) -> None:
         super().__init__()
         self._zoom_title = title
         self._zoom_content = content
         self._is_markdown = is_markdown
+        self._pty_session = pty_session
 
     def compose(self) -> ComposeResult:
         box = Vertical(id="zoom-dialog")
-        box.border_title = f"{self._zoom_title}  (Esc / z para volver)"
+        if self._pty_session is not None:
+            box.border_title = f"{self._zoom_title}  (PTY Interactivo · rueda/PgUp para scroll · Ctrl+G para volver)"
+        else:
+            box.border_title = f"{self._zoom_title}  (Esc / z para volver)"
         with box:
-            with VerticalScroll(id="zoom-scroll"):
-                if self._is_markdown:
-                    yield Markdown(str(self._zoom_content))
-                else:
-                    yield Static(self._zoom_content)
+            if self._pty_session is not None:
+                yield AgentTerminalWidget("", id="zoom-terminal-pane")
+            else:
+                with VerticalScroll(id="zoom-scroll"):
+                    if self._is_markdown:
+                        yield Markdown(str(self._zoom_content))
+                    else:
+                        yield Static(self._zoom_content)
+
+    def on_mount(self) -> None:
+        if self._pty_session is not None:
+            try:
+                term = self.query_one("#zoom-terminal-pane", AgentTerminalWidget)
+                term.attach_pty(self._pty_session)
+                term.focus()
+                self.call_after_refresh(lambda: term.refresh_viewport(force=True))
+            except NoMatches:
+                pass
 
 
 class AosTuiApp(App):
@@ -148,6 +182,11 @@ class AosTuiApp(App):
         Binding("7", "switch_tab('tab-tokens')", "Tokens", show=True),
         Binding("space", "toggle_pause", "Pausar", show=True),
         Binding("z", "toggle_zoom", "Zoom", show=True),
+        Binding("g", "toggle_subagent_graph", "Grafo", show=True),
+        Binding("m", "toggle_mute", "Mute", show=True),
+        Binding("n", "new_agent_session", "Nueva", show=False),
+        Binding("k", "stop_agent_session", "Stop", show=False),
+        Binding("escape", "stop_voice", "Cortar Voz", show=False),
         Binding("r", "refresh_now", "Refrescar", show=True),
         Binding("v", "run_verify", "Verify", show=True),
         Binding("s", "run_scan", "Scan", show=True),
@@ -201,6 +240,18 @@ class AosTuiApp(App):
         self._active_proc: Optional[subprocess.Popen] = None
         self._rag_initialized = False
         self._rag_last: Any = None
+        self._dirty_tabs: Set[str] = set()
+        self._agent_right_mode: str = "terminal"
+        self.alerts = AlertDispatcher(muted=False)
+        cli_home_override = (
+            (antigravity_home.parent / "antigravity-cli")
+            if antigravity_home is not None
+            else None
+        )
+        self.controller = SessionController(
+            project_root=self.project_root,
+            antigravity_cli_home=cli_home_override,
+        )
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="top-bar"):
@@ -248,9 +299,21 @@ class AosTuiApp(App):
                     with Vertical(classes="col-right-wide"):
                         with Vertical(id="agents-activity-box", classes="panel"):
                             yield Static("", id="agents-session-summary")
+                            yield AgentTerminalWidget("", id="agent-terminal-pane")
                             yield RichLog(id="agents-activity-log", wrap=True, markup=False)
                         with Vertical(id="agents-log-box", classes="panel"):
                             yield RichLog(id="agents-task-log", wrap=True, markup=False)
+                        with Horizontal(id="agent-composer-row"):
+                            yield Input(
+                                placeholder="Promptear al PTY / sesión (o nombre + Nueva · /voice para voz)...",
+                                id="agent-prompt-input",
+                            )
+                            yield Button("CLI", id="btn-agent-attach")
+                            yield Button("Grafo", id="btn-agent-graph")
+                            yield Button("Vista", id="btn-agent-view")
+                            yield Button("Nueva", id="btn-agent-new")
+                            yield Button("Voz", id="btn-agent-voice")
+                            yield Button("Stop", id="btn-agent-stop")
 
             # 4. Git & Diff
             with TabPane("Git & Diff", id="tab-git"):
@@ -319,10 +382,14 @@ class AosTuiApp(App):
     def on_mount(self) -> None:
         self._init_panel_titles()
         self._init_tables()
+        self._apply_agent_right_mode()
         self._refresh_worker(force_slow=True)
         self.set_interval(self.interval, self._tick_refresh)
+        self.set_interval(0.15, self._tick_pty)
 
     def on_unmount(self) -> None:
+        self.controller.stop_active_process()
+        self.controller.tts.stop()
         proc = self._active_proc
         if proc is not None and proc.poll() is None:
             try:
@@ -377,7 +444,7 @@ class AosTuiApp(App):
             ("#dash-agents-table", ("", "Sesión / Task", "Estado", "Act.")),
             ("#plans-table", ("Tipo", "Archivo", "Info")),
             ("#agents-sessions-table", ("", "Sesión", "Estado", "Act.")),
-            ("#agents-tasks-table", ("", "Task", "Estado", "Edad")),
+            ("#agents-tasks-table", ("", "Task", "Estado", "Ejecutado")),
             ("#git-files-table", ("Flag", "Archivo")),
             ("#rag-results-table", ("Tipo", "Score", "Título › Sección")),
             ("#gotchas-table", ("Gravedad", "Gotcha", "Fecha")),
@@ -440,6 +507,113 @@ class AosTuiApp(App):
         if not self._refreshing:
             self._refresh_worker(force_slow=False)
 
+    def _tick_pty(self) -> None:
+        if not self.is_mounted or not self.screen_stack or not self.controller.pty_sessions:
+            return
+        changed = self.controller.poll_all_ptys(self._sessions_by_key)
+        closed_ptys = list(self.controller.recently_closed_ptys)
+        self.controller.recently_closed_ptys.clear()
+        closed_keys = {k for k, _ in closed_ptys}
+        if closed_keys:
+            if isinstance(self.screen, ZoomScreen):
+                z_pty = self.screen._pty_session
+                if z_pty is not None and z_pty.session_key in closed_keys:
+                    self.screen.dismiss(None)
+            try:
+                term = self._main_query("#agent-terminal-pane", AgentTerminalWidget)
+                if term.pty_session is not None and term.pty_session.session_key in closed_keys:
+                    term.attach_pty(None)
+                    if self.focused is term:
+                        try:
+                            self._main_query("#agents-sessions-table", DataTable).focus()
+                        except NoMatches:
+                            self.set_focus(None)
+            except NoMatches:
+                pass
+            for ckey, _code in closed_ptys:
+                csess = self._sessions_by_key.get(ckey)
+                label = csess.title if csess is not None else ckey
+                self.notify(f"Terminal cerrada (/exit): {label}", timeout=2.5)
+            self._last_session_sig = None
+            try:
+                self._render_selected_session()
+            except NoMatches:
+                pass
+        newly_pending = self.alerts.process_sessions(list(self._sessions_by_key.values()))
+        for psess in newly_pending:
+            reason = psess.pending_reason or "Esperando acción en terminal"
+            self.notify(f"⚠ PENDING ({psess.title}): {reason}", severity="warning", timeout=5.0)
+        if changed:
+            if isinstance(self.screen, ZoomScreen):
+                try:
+                    self.screen.query_one("#zoom-terminal-pane", AgentTerminalWidget).refresh_viewport()
+                except NoMatches:
+                    pass
+            else:
+                try:
+                    term = self._main_query("#agent-terminal-pane", AgentTerminalWidget)
+                    term.refresh_viewport()
+                    self._render_selected_session()
+                except NoMatches:
+                    pass
+
+    def _apply_agent_right_mode(self) -> None:
+        try:
+            term = self._main_query("#agent-terminal-pane", AgentTerminalWidget)
+            act_log = self._main_query("#agents-activity-log", RichLog)
+            box = self._main_query("#agents-activity-box")
+            log_box = self._main_query("#agents-log-box")
+            mode = self._agent_right_mode
+            is_term = mode == "terminal"
+            is_graph = mode == "graph"
+            term.display = is_term
+            act_log.display = not is_term
+            log_box.display = mode == "inspector"
+            if is_term:
+                box.border_title = "Terminal CLI en Vivo (PTY · Enter para conectar · Ctrl+G para salir de Modo Terminal)"
+            elif is_graph:
+                box.border_title = "Grafo de Subagentes & Workflows en Vivo (g para alternar · z para Zoom)"
+            else:
+                box.border_title = "Inspector · Timeline del Agente"
+            self._last_session_sig = None
+            self._render_selected_session()
+            term.refresh_viewport()
+        except NoMatches:
+            pass
+
+    def action_toggle_agent_view(self) -> None:
+        cycle = {"terminal": "graph", "graph": "inspector", "inspector": "terminal"}
+        self._agent_right_mode = cycle.get(self._agent_right_mode, "terminal")
+        self._apply_agent_right_mode()
+
+    def action_toggle_subagent_graph(self) -> None:
+        self.action_switch_tab("tab-agents")
+        self._agent_right_mode = "terminal" if self._agent_right_mode == "graph" else "graph"
+        self._apply_agent_right_mode()
+
+    def action_attach_agent_pty(self) -> None:
+        self.action_switch_tab("tab-agents")
+        sess = self._sessions_by_key.get(self._selected_session_key or "")
+        if sess is None:
+            sess = self.controller.create_named_session("herdr-1")
+            skey = f"{sess.tool}:{sess.session_id}"
+            self._sessions_by_key[skey] = sess
+            self._selected_session_key = skey
+        self._agent_right_mode = "terminal"
+        self._apply_agent_right_mode()
+        try:
+            term = self._main_query("#agent-terminal-pane", AgentTerminalWidget)
+            cols = max(40, term.size.width - 2) if term.size.width > 20 else 90
+            rows = max(10, term.size.height - 2) if term.size.height > 6 else 24
+            prev_pty = term.pty_session
+            pty_sess = self.controller.open_or_attach_pty(sess, cols=cols, rows=rows)
+            term.attach_pty(pty_sess)
+            term.focus()
+            if prev_pty is not pty_sess:
+                self.notify(f"CLI conectado en PTY: {sess.title} (Ctrl+G para salir de Modo Terminal)", timeout=2.5)
+        except NoMatches:
+            pass
+
     def action_toggle_pause(self) -> None:
         self._paused = not self._paused
         if self.snapshot is not None:
@@ -480,6 +654,22 @@ class AosTuiApp(App):
                 out.append("\n")
             return f"Git Diff · {self._selected_git_path}", out, False
         if tab == "tab-agents":
+            if self._agent_right_mode == "graph" and focused_id not in ("agents-tasks-table", "agents-task-log"):
+                sess = self._sessions_by_key.get(self._selected_session_key or "")
+                out = format_subagent_graph(
+                    sess,
+                    list(self._sessions_by_key.values()),
+                    list(self._tasks_by_key.values()),
+                )
+                return f"Grafo de Subagentes · {sess.title if sess else '-'}", out, False
+            live_pty = self.controller.pty_sessions.get(self._selected_session_key or "")
+            if live_pty is not None and (focused_id == "agent-terminal-pane" or self._agent_right_mode == "terminal"):
+                live_pty.poll_output()
+                sess = self._sessions_by_key.get(self._selected_session_key or "")
+                out = format_session_detail_summary(sess)
+                out.append("\n\n")
+                out.append_text(live_pty.screen.render_rich(show_cursor=True))
+                return f"Terminal PTY · {sess.title if sess else '-'}", out, False
             if focused_id == "agents-activity-log" or (not self._selected_task_key and self._selected_session_key):
                 sess = self._sessions_by_key.get(self._selected_session_key or "")
                 out = format_session_detail_summary(sess)
@@ -526,8 +716,45 @@ class AosTuiApp(App):
         return "Actividad en Tiempo Real", out or Text("(sin eventos)"), False
 
     def action_toggle_zoom(self) -> None:
+        tab = self.query_one("#main-tabs", TabbedContent).active
+        focused_id = self.focused.id if self.focused else ""
+        if tab == "tab-agents" and focused_id not in ("agents-tasks-table", "agents-task-log"):
+            skey = self._selected_session_key or ""
+            sess = self._sessions_by_key.get(skey)
+            live_pty = self.controller.pty_sessions.get(skey)
+            if (
+                sess is not None
+                and self._agent_right_mode == "terminal"
+                and focused_id != "agents-activity-log"
+            ):
+                if live_pty is None:
+                    live_pty = self.controller.open_or_attach_pty(sess, cols=100, rows=28)
+                    try:
+                        self._main_query("#agent-terminal-pane", AgentTerminalWidget).attach_pty(live_pty)
+                    except NoMatches:
+                        pass
+                live_pty.poll_output()
+                self.push_screen(
+                    ZoomScreen(
+                        f"Terminal PTY · {sess.title}",
+                        "",
+                        is_markdown=False,
+                        pty_session=live_pty,
+                    ),
+                    callback=lambda _res: self._on_zoom_closed(),
+                )
+                return
         title, content, is_md = self._zoom_payload()
         self.push_screen(ZoomScreen(title, content, is_markdown=is_md))
+
+    def _on_zoom_closed(self) -> None:
+        try:
+            term = self._main_query("#agent-terminal-pane", AgentTerminalWidget)
+            term.refresh_viewport(force=True)
+            self._last_session_sig = None
+            self._render_selected_session()
+        except NoMatches:
+            pass
 
     def action_switch_tab(self, tab_id: str) -> None:
         tabs = self.query_one("#main-tabs", TabbedContent)
@@ -535,6 +762,101 @@ class AosTuiApp(App):
             # Clear focus inside the outgoing pane so Textual does not bounce back when hiding it.
             self.set_focus(None)
             tabs.active = tab_id
+        if self.snapshot is not None:
+            self._sync_tab(tab_id, self.snapshot)
+
+    @on(TabbedContent.TabActivated, "#main-tabs")
+    def handle_tab_activated(self, event: TabbedContent.TabActivated) -> None:
+        pane_id = event.pane.id if event.pane else ""
+        if pane_id and self.snapshot is not None:
+            self._sync_tab(pane_id, self.snapshot)
+
+    def action_toggle_mute(self) -> None:
+        muted = self.alerts.toggle_mute()
+        if muted:
+            self.controller.tts.stop()
+        if self.snapshot is not None:
+            self._update_header(self.snapshot)
+        msg = "Alertas y sonido silenciados (m para activar)" if muted else "Alertas y sonido activados"
+        self.notify(msg, timeout=2.0)
+
+    def action_stop_voice(self) -> None:
+        if isinstance(self.focused, Input):
+            self.set_focus(None)
+        if self.controller.tts.stop():
+            self.notify("Locución de voz detenida", timeout=1.5)
+
+    def action_new_agent_session(self) -> None:
+        self.action_switch_tab("tab-agents")
+        try:
+            inp = self._main_query("#agent-prompt-input", Input)
+            raw_name = inp.value.strip()
+            inp.value = ""
+        except NoMatches:
+            raw_name = ""
+        selected = self._sessions_by_key.get(self._selected_session_key or "")
+        tool_choice = selected.tool if selected is not None else "claude-code"
+        clean_name = raw_name
+        low_raw = raw_name.lower()
+        if low_raw.startswith(("agy:", "ag:")):
+            tool_choice = "antigravity"
+            clean_name = raw_name.split(":", 1)[1].strip()
+        elif low_raw.startswith(("cc:", "claude:")):
+            tool_choice = "claude-code"
+            clean_name = raw_name.split(":", 1)[1].strip()
+        sess = self.controller.create_named_session(
+            clean_name or f"herdr-{len(self.controller.named_sessions) + 1}",
+            tool=tool_choice,
+        )
+        skey = f"{sess.tool}:{sess.session_id}"
+        self._sessions_by_key[skey] = sess
+        self._selected_session_key = skey
+        self._last_session_sig = None
+        if self.snapshot is not None:
+            self._update_agents_tab(self.snapshot)
+        self._push_event(LiveEvent(time.strftime("%H:%M:%S"), "info", sess.tool, f"Nueva sesión creada: {sess.title}"))
+        self.notify(f"Sesión creada: {sess.title}", timeout=2.0)
+
+    def action_toggle_voice_mode(self) -> None:
+        skey = self._selected_session_key
+        if not skey:
+            self.notify("Selecciona primero una sesión en Agentes.", severity="warning", timeout=2.0)
+            return
+        active = self.controller.toggle_voice(skey)
+        self._last_session_sig = None
+        try:
+            self._render_selected_session()
+        except NoMatches:
+            pass
+        sess = self._sessions_by_key.get(skey)
+        if active and sess and sess.last_assistant_text:
+            self.controller.tts.speak(sess.last_assistant_text)
+        label = "activado (/voice + respuesta TTS)" if active else "desactivado"
+        self.notify(f"Modo voz {label}", timeout=2.0)
+
+    def action_stop_agent_session(self) -> None:
+        stopped_proc = self.controller.stop_active_process(self._selected_session_key)
+        stopped_tts = self.controller.tts.stop()
+        try:
+            term = self._main_query("#agent-terminal-pane", AgentTerminalWidget)
+            if term.pty_session and not term.pty_session.alive:
+                term.attach_pty(None)
+            if self.focused is term:
+                try:
+                    self._main_query("#agents-sessions-table", DataTable).focus()
+                except NoMatches:
+                    self.set_focus(None)
+        except NoMatches:
+            pass
+        self._last_session_sig = None
+        try:
+            self._render_selected_session()
+        except NoMatches:
+            pass
+        if stopped_proc or stopped_tts:
+            self.notify("Proceso / PTY / voz de sesión detenido.", timeout=2.0)
+        else:
+            self.notify("No hay proceso gestionado activo para detener.", timeout=1.5)
 
     def action_refresh_now(self) -> None:
         self._refresh_worker(force_slow=True)
@@ -558,6 +880,25 @@ class AosTuiApp(App):
 
     @on(Button.Pressed)
     def handle_runner_buttons(self, event: Button.Pressed) -> None:
+        bid = event.button.id
+        if bid == "btn-agent-attach":
+            self.action_attach_agent_pty()
+            return
+        if bid == "btn-agent-graph":
+            self.action_toggle_subagent_graph()
+            return
+        if bid == "btn-agent-view":
+            self.action_toggle_agent_view()
+            return
+        if bid == "btn-agent-new":
+            self.action_new_agent_session()
+            return
+        if bid == "btn-agent-voice":
+            self.action_toggle_voice_mode()
+            return
+        if bid == "btn-agent-stop":
+            self.action_stop_agent_session()
+            return
         mapping = {
             "btn-verify": ("verify", ["verify"]),
             "btn-scan": ("scan", ["scan", "--dry-run"]),
@@ -565,13 +906,45 @@ class AosTuiApp(App):
             "btn-refresh-cmd": ("refresh", ["refresh"]),
             "btn-doctor": ("doctor", ["doctor"]),
         }
-        if event.button.id in mapping:
-            label, args = mapping[event.button.id]
+        if bid in mapping:
+            label, args = mapping[bid]
             self._start_aos_command(label, args)
 
     @on(Input.Submitted, "#rag-input")
     def handle_rag_submit(self, event: Input.Submitted) -> None:
         self._rag_worker(event.value.strip())
+
+    @on(Input.Submitted, "#agent-prompt-input")
+    def handle_agent_prompt_submit(self, event: Input.Submitted) -> None:
+        prompt = event.value.strip()
+        if not prompt:
+            return
+        event.input.value = ""
+        if prompt.lower() == "/voice":
+            self.action_toggle_voice_mode()
+            skey = self._selected_session_key or ""
+            pty_v = self.controller.pty_sessions.get(skey)
+            if pty_v is not None and pty_v.alive:
+                pty_v.write("/voice\r")
+            return
+        self.controller.tts.stop()
+        sess = self._sessions_by_key.get(self._selected_session_key or "")
+        if sess is None:
+            sess = self.controller.create_named_session("herdr-main")
+            skey = f"{sess.tool}:{sess.session_id}"
+            self._sessions_by_key[skey] = sess
+            self._selected_session_key = skey
+        else:
+            skey = f"{sess.tool}:{sess.session_id}"
+        pty_sess = self.controller.pty_sessions.get(skey)
+        if pty_sess is not None and pty_sess.alive:
+            pty_sess.write(prompt + "\r")
+            try:
+                self._main_query("#agent-terminal-pane", AgentTerminalWidget).refresh_viewport()
+            except NoMatches:
+                pass
+            return
+        self._session_prompt_worker(sess, prompt)
 
     def _on_plan_row(self, row_key: Any) -> None:
         if not self.is_mounted or not self.screen_stack:
@@ -607,6 +980,7 @@ class AosTuiApp(App):
     @on(DataTable.RowSelected, "#agents-sessions-table")
     def handle_session_selected(self, event: DataTable.RowSelected) -> None:
         self._on_session_row(event.row_key)
+        self.action_attach_agent_pty()
 
     @on(DataTable.RowHighlighted, "#agents-sessions-table")
     def handle_session_highlighted(self, event: DataTable.RowHighlighted) -> None:
@@ -627,6 +1001,9 @@ class AosTuiApp(App):
     @on(DataTable.RowSelected, "#agents-tasks-table")
     def handle_task_selected(self, event: DataTable.RowSelected) -> None:
         self._on_task_row(event.row_key)
+        if self._agent_right_mode == "terminal":
+            self._agent_right_mode = "inspector"
+            self._apply_agent_right_mode()
 
     @on(DataTable.RowHighlighted, "#agents-tasks-table")
     def handle_task_highlighted(self, event: DataTable.RowHighlighted) -> None:
@@ -702,19 +1079,72 @@ class AosTuiApp(App):
         for ev in new_events:
             self._push_event(ev)
 
+        # Preserve live PTY status on snapshot sessions so snapshot & PTY ticks stay consistent
+        for sess in snap.sessions:
+            skey = f"{sess.tool}:{sess.session_id}"
+            pty_s = self.controller.pty_sessions.get(skey)
+            if pty_s is not None and pty_s.alive:
+                st, reason = detect_terminal_agent_state(pty_s.screen)
+                if st == "pending":
+                    sess.status = "pending"
+                    sess.pending_reason = reason or "Esperando acción en terminal"
+                elif st == "running":
+                    sess.status = "running"
+                    sess.pending_reason = ""
+                else:
+                    sess.status = "active"
+                    sess.pending_reason = ""
+
+        # CA-4: Fire multi-channel pending alerts (TUI banner/toast + sound + OS toast)
+        newly_pending = self.alerts.process_sessions(snap.sessions)
+        for psess in newly_pending:
+            reason = psess.pending_reason or "Esperando aprobación o respuesta"
+            self.notify(f"⚠ PENDING ({psess.title}): {reason}", severity="warning", timeout=5.0)
+
+        # CA-6: Speak assistant response when `/voice` is active on a session
+        if not self.alerts.muted:
+            self.controller.sync_voice_sessions(snap.sessions)
+
+        all_tabs = {
+            "tab-overview",
+            "tab-plans",
+            "tab-agents",
+            "tab-git",
+            "tab-knowledge",
+            "tab-tokens",
+        }
+        self._dirty_tabs.update(all_tabs)
+
         try:
             self._update_header(snap)
-            self._update_overview(snap)
-            self._update_plans_tab(snap)
-            self._update_agents_tab(snap)
-            self._update_git_tab(snap)
-            self._update_knowledge_tab(snap)
-            self._update_tokens_tab(snap)
+            active_tab = self._main_query("#main-tabs", TabbedContent).active or "tab-overview"
+            self._sync_tab(active_tab, snap)
         except NoMatches:
             return
         if not self._rag_initialized:
             self._rag_initialized = True
             self._rag_worker("")
+
+    def _sync_tab(self, tab_id: str, snap: TelemetrySnapshot) -> None:
+        """Lazily update only the requested tab (`CA-1`)."""
+        if tab_id not in self._dirty_tabs and tab_id != "tab-agents":
+            return
+        self._dirty_tabs.discard(tab_id)
+        try:
+            if tab_id == "tab-overview":
+                self._update_overview(snap)
+            elif tab_id == "tab-plans":
+                self._update_plans_tab(snap)
+            elif tab_id == "tab-agents":
+                self._update_agents_tab(snap)
+            elif tab_id == "tab-git":
+                self._update_git_tab(snap)
+            elif tab_id == "tab-knowledge":
+                self._update_knowledge_tab(snap)
+            elif tab_id == "tab-tokens":
+                self._update_tokens_tab(snap)
+        except NoMatches:
+            pass
 
     def _update_header(self, snap: TelemetrySnapshot) -> None:
         box_w = self._main_query("#top-project").size.width
@@ -739,6 +1169,11 @@ class AosTuiApp(App):
             info.append("  || PAUSADO", style="bold #fbbf24")
         elif self._runner_busy:
             info.append("  ▸ [runner]", style="bold #fbbf24")
+        if self.alerts.muted:
+            info.append("  [MUTE]", style="bold #94a3b8")
+        pending_list = [s for s in snap.sessions if s.status == "pending"]
+        if pending_list:
+            info.append(f"  ⚠ {len(pending_list)} PENDING", style="bold #0b1120 on #fbbf24")
         info.append(f"  ·  {ts_str}\n", style="#94a3b8")
 
         info.append("Working folder:  ", style="#64748b")
@@ -891,14 +1326,31 @@ class AosTuiApp(App):
     def _update_agents_tab(self, snap: TelemetrySnapshot) -> None:
         self._sessions_by_key.clear()
         sess_rows: List[Tuple[Optional[str], Sequence[Any]]] = []
+        combined_sessions: List[AgentSessionInfo] = []
+        seen_keys: Set[str] = set()
         for sess in snap.sessions:
             skey = f"{sess.tool}:{sess.session_id}"
+            if skey in self.controller.named_sessions:
+                self.controller.named_sessions[skey] = sess
+            if skey not in seen_keys:
+                combined_sessions.append(sess)
+                seen_keys.add(skey)
+        for skey, nsess in self.controller.named_sessions.items():
+            if skey not in seen_keys:
+                combined_sessions.insert(0, nsess)
+                seen_keys.add(skey)
+
+        for sess in combined_sessions:
+            skey = f"{sess.tool}:{sess.session_id}"
             self._sessions_by_key[skey] = sess
+            title_txt = " ".join(sess.title.split())[:28]
+            if self.controller.is_voice_enabled(skey) or sess.voice_active:
+                title_txt = f"🎤 {title_txt}"
             sess_rows.append((
                 skey,
                 (
                     agent_badge(sess.tool),
-                    Text(" ".join(sess.title.split())[:30], style="#e2e8f0"),
+                    Text(title_txt, style="#e2e8f0"),
                     status_text(sess.status),
                     Text(compact_age(sess.updated_at), style="#94a3b8"),
                 ),
@@ -928,7 +1380,7 @@ class AosTuiApp(App):
                     agent_badge(task.agent),
                     label,
                     status_text(task.status),
-                    Text(compact_age(task.updated_at), style="#94a3b8"),
+                    Text(format_task_datetime(task.started_at, task.updated_at), style="#94a3b8"),
                 ),
             ))
         if not task_rows:
@@ -940,25 +1392,77 @@ class AosTuiApp(App):
         self._render_selected_task()
 
     def _render_selected_session(self) -> None:
-        sess = self._sessions_by_key.get(self._selected_session_key or "")
+        skey = self._selected_session_key or ""
+        sess = self._sessions_by_key.get(skey)
+        voice_on = self.controller.is_voice_enabled(skey)
+        live_pty = self.controller.pty_sessions.get(skey)
+        mode = self._agent_right_mode
+        is_compact = mode in ("terminal", "graph")
         sig = (
             sess.tool,
             sess.session_id,
             sess.status,
+            sess.pending_reason,
+            voice_on,
+            mode,
+            live_pty is not None,
+            live_pty.alive if live_pty is not None else False,
+            len(sess.subagents),
+            len(sess.workflows),
+            len(sess.touched_files),
             len(sess.activities),
             sess.activities[-1].summary if sess.activities else "",
+            len(self._tasks_by_key) if mode == "graph" else 0,
         ) if sess else None
         if sig == self._last_session_sig:
             return
         self._last_session_sig = sig
 
-        self._main_query("#agents-session-summary", Static).update(format_session_detail_summary(sess))
+        self._main_query("#agents-session-summary", Static).update(
+            format_session_detail_summary(sess, voice_enabled=voice_on, compact=is_compact)
+        )
+        try:
+            term = self._main_query("#agent-terminal-pane", AgentTerminalWidget)
+            if live_pty is not None:
+                term.attach_pty(live_pty)
+            else:
+                term.pty_session = None
+                preview = Text()
+                if sess:
+                    preview.append(
+                        f"Sesión {sess.tool} · {sess.title} ({sess.session_id[:8]})\n",
+                        style="bold #d9b15f",
+                    )
+                    cli_hint = (
+                        f"agy --conversation {sess.session_id[:8]}…"
+                        if sess.tool == "antigravity"
+                        else f"claude --resume {sess.session_id[:8]}…"
+                    )
+                    preview.append(
+                        f"Pulsa Enter sobre la sesión o clic en 'CLI' para conectar el PTY interactivo en vivo ({cli_hint}).\n\n",
+                        style="#8aa8cc",
+                    )
+                    for item in sess.activities[-12:]:
+                        preview.append_text(format_activity_row(item))
+                        preview.append("\n")
+                term.update(preview)
+        except NoMatches:
+            pass
         log = self._main_query("#agents-activity-log", RichLog)
         log.clear()
         if not sess:
             return
+        if mode == "graph":
+            log.write(
+                format_subagent_graph(
+                    sess,
+                    list(self._sessions_by_key.values()),
+                    list(self._tasks_by_key.values()),
+                )
+            )
+            return
         if not sess.activities:
-            log.write(Text("Sin eventos recientes en el transcript.", style="#64748b"))
+            log.write(Text("Sin eventos recientes. Escribe abajo para enviar un prompt a esta sesión.", style="#64748b"))
             return
         for item in sess.activities:
             log.write(format_activity_row(item))
@@ -974,14 +1478,117 @@ class AosTuiApp(App):
                 self._last_task_tail_sig = None
             return
         lines = list(task.tail_lines)
-        sig = (task.agent, task.session_id, task.id, task.status, len(lines), lines[-1] if lines else "")
+        sig = (
+            task.agent,
+            task.session_id,
+            task.id,
+            task.status,
+            task.started_at,
+            task.updated_at,
+            len(lines),
+            lines[-1] if lines else "",
+        )
         if sig == self._last_task_tail_sig:
             return
         self._last_task_tail_sig = sig
-        box.border_title = f"Log · {task.agent}:{task.id} ({task.status})"
+        box.border_title = format_task_log_header(task)
         log.clear()
         for line in lines:
             log.write(format_output_line(line))
+
+    @work(thread=True, exclusive=True, group="agent-prompt")
+    def _session_prompt_worker(self, sess: AgentSessionInfo, prompt: str) -> None:
+        skey = f"{sess.tool}:{sess.session_id}"
+        is_resume = sess.meta != "nueva (TUI)"
+        cmd = self.controller.build_prompt_command(
+            tool=sess.tool,
+            prompt=prompt,
+            session_id=sess.session_id,
+            session_name=sess.title if not is_resume else None,
+            resume=is_resume,
+        )
+        now_hms = time.strftime("%H:%M:%S")
+        sess.status = "running"
+        sess.pending_reason = ""
+        sess.updated_at = time.time()
+        sess.activities.append(AgentActivityItem(timestamp=now_hms, agent="user", kind="prompt", summary=f"Prompt: {prompt}"))
+
+        def _on_start() -> None:
+            self._last_session_sig = None
+            self._push_event(LiveEvent(now_hms, "info", sess.tool, f"Prompt -> {sess.title}: {prompt[:48]}"))
+            try:
+                self._render_selected_session()
+            except NoMatches:
+                pass
+
+        self.call_from_thread(_on_start)
+
+        env = os.environ.copy()
+        env["PYTHONUTF8"] = "1"
+        env["PYTHONIOENCODING"] = "utf-8"
+
+        last_assistant: Optional[str] = None
+        try:
+            with subprocess.Popen(
+                cmd,
+                cwd=str(self.project_root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=env,
+            ) as proc:
+                self.controller.active_proc = proc
+                self.controller.active_session_key = skey
+                if proc.stdout is not None:
+                    for raw_line in proc.stdout:
+                        disp_lines, asst_txt = self.controller.parse_stream_json_line(raw_line)
+                        if asst_txt:
+                            last_assistant = asst_txt
+                            sess.last_assistant_text = asst_txt
+                        for dln in disp_lines:
+                            sess.activities.append(
+                                AgentActivityItem(
+                                    timestamp=time.strftime("%H:%M:%S"),
+                                    agent=sess.tool,
+                                    kind="stream",
+                                    summary=f"Stream: {dln}",
+                                )
+                            )
+                        if disp_lines:
+                            self.call_from_thread(self._refresh_session_stream_view)
+                proc.wait()
+        except OSError as exc:
+            sess.activities.append(
+                AgentActivityItem(
+                    timestamp=time.strftime("%H:%M:%S"),
+                    agent=sess.tool,
+                    kind="error",
+                    summary=f"Error: {exc}",
+                )
+            )
+        finally:
+            self.controller.active_proc = None
+            self.controller.active_session_key = None
+            sess.status = "active"
+            sess.meta = "activa (TUI)"
+            sess.updated_at = time.time()
+            if last_assistant and (self.controller.is_voice_enabled(skey) or sess.voice_active) and not self.alerts.muted:
+                self.controller.tts.speak(last_assistant)
+            try:
+                self.call_from_thread(self._refresh_session_stream_view)
+            except RuntimeError:
+                pass
+
+    def _refresh_session_stream_view(self) -> None:
+        if not self.is_mounted or not self.screen_stack:
+            return
+        self._last_session_sig = None
+        try:
+            self._render_selected_session()
+        except NoMatches:
+            pass
 
     def _update_git_tab(self, snap: TelemetrySnapshot) -> None:
         git_rows: List[Tuple[Optional[str], Sequence[Any]]] = []

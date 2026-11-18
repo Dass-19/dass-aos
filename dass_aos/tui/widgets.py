@@ -4,12 +4,12 @@ from __future__ import annotations
 import datetime as dt
 import re
 from collections import Counter
-from typing import Iterable, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from rich.text import Text
 
 from ..status import CHECKING, NEEDS_DECISION, READY, WORKING
-from ..telemetry import AgentSessionInfo, LiveEvent, TelemetrySnapshot
+from ..telemetry import AgentSessionInfo, AgentTaskInfo, LiveEvent, TelemetrySnapshot
 
 
 def format_tokens_compact(n: int) -> str:
@@ -145,6 +145,7 @@ def format_kpi_agents(snap: TelemetrySnapshot, inner_width: int = 28) -> Text:
     """Build compact 4-line KPI card 2: Claude Code, Antigravity & Tasks."""
     t = Text(no_wrap=True, overflow="ellipsis")
     running_sessions = [s for s in snap.sessions if s.status in ("running", "busy", "active")]
+    pending_sessions = [s for s in snap.sessions if s.status == "pending"]
     running_tasks = [tk for tk in snap.tasks if tk.status in ("running", "in_progress")]
 
     claude_n = sum(1 for s in snap.sessions if s.tool == "claude-code")
@@ -152,7 +153,9 @@ def format_kpi_agents(snap: TelemetrySnapshot, inner_width: int = 28) -> Text:
     sub_n = sum(len(s.subagents) for s in snap.sessions)
 
     t.append(f"{len(snap.sessions)} sesión(es)", style="bold #f8fafc")
-    if running_sessions:
+    if pending_sessions:
+        t.append(f" · ⚠ {len(pending_sessions)} pend.", style="bold #fbbf24")
+    elif running_sessions:
         t.append(f" · ● {len(running_sessions)} act.", style="bold #34d399")
     t.append("\n")
     t.append(f"Claude: {claude_n}", style="#fbbf24" if claude_n else "#64748b")
@@ -487,6 +490,7 @@ def format_pulse_and_distribution(
 AGENT_COLORS = {"claude-code": "#d9b15f", "antigravity": "#8aa8cc", "tui-runner": "#9aa59c"}
 _AGENT_BADGES = {"claude-code": "CC", "antigravity": "AG", "tui-runner": "TUI"}
 _STATUS_LOOK = {
+    "pending": ("⚠", "bold #fbbf24"),
     "running": ("▸", "bold #d9b15f"), "in_progress": ("▸", "bold #d9b15f"),
     "busy": ("▸", "bold #d9b15f"), "active": ("▸", "bold #d9b15f"),
     "recent": ("●", "#8aa8cc"), "idle": ("○", "#64748b"),
@@ -509,6 +513,42 @@ def compact_age(updated_at: float) -> str:
     return format_session_age(updated_at).replace("hace ", "")
 
 
+def format_duration_compact(seconds: float) -> str:
+    secs = max(0, int(round(seconds)))
+    if secs < 60:
+        return f"{secs}s"
+    if secs < 3600:
+        mins, rem = divmod(secs, 60)
+        return f"{mins}m{rem:02d}s" if rem else f"{mins}m"
+    hrs, rem = divmod(secs, 3600)
+    return f"{hrs}h{rem // 60:02d}m"
+
+
+def format_task_datetime(started_at: float, updated_at: float = 0.0) -> str:
+    """Format execution datetime `YYYY-MM-DD HH:MM:SS` plus duration or relative age (`CA-2`)."""
+    anchor = started_at if started_at > 0 else updated_at
+    if anchor <= 0:
+        return "-"
+    dt_str = dt.datetime.fromtimestamp(anchor).strftime("%Y-%m-%d %H:%M:%S")
+    if started_at > 0 and updated_at > started_at:
+        dur = format_duration_compact(updated_at - started_at)
+        return f"{dt_str} ({dur})"
+    age = compact_age(anchor)
+    return f"{dt_str} ({age})" if age != "-" else dt_str
+
+
+def format_task_log_header(task: AgentTaskInfo) -> str:
+    """Build the border title for the task log panel with start → end and duration (`CA-2`)."""
+    start_ts = task.started_at if task.started_at > 0 else task.updated_at
+    end_ts = task.updated_at if task.updated_at >= start_ts else start_ts
+    if start_ts <= 0:
+        return f"Log · {task.agent}:{task.id} ({task.status})"
+    start_s = dt.datetime.fromtimestamp(start_ts).strftime("%Y-%m-%d %H:%M:%S")
+    end_s = dt.datetime.fromtimestamp(end_ts).strftime("%H:%M:%S")
+    dur_s = format_duration_compact(task.duration_seconds)
+    return f"Log · {task.agent}:{task.id} ({task.status}) · {start_s} → {end_s} ({dur_s})"
+
+
 def format_activity_row(item) -> Text:
     """Timeline row: `HH:MM  Tool  argument`, tool in gold, argument muted."""
     tool, _, arg = item.summary.partition(":")
@@ -520,24 +560,217 @@ def format_activity_row(item) -> Text:
     return row
 
 
-def format_session_detail_summary(sess: Optional[AgentSessionInfo]) -> Text:
+def format_session_detail_summary(
+    sess: Optional[AgentSessionInfo],
+    voice_enabled: bool = False,
+    compact: bool = False,
+) -> Text:
     t = Text()
     if sess is None:
-        t.append("Selecciona una sesión para inspeccionar su actividad.", style="#64748b")
+        t.append("Selecciona una sesión para inspeccionar su actividad o enviar un prompt.", style="#64748b")
         return t
     t.append_text(agent_badge(sess.tool))
-    t.append(f"  {sess.title}\n", style="bold #f8fafc")
+    t.append(f"  {sess.title}", style="bold #f8fafc")
+    if sess.voice_active or voice_enabled:
+        t.append("   [🎤 VOZ ACTIVA]", style="bold #34d399")
+    if compact:
+        t.append("   ", style="#475569")
+        t.append_text(status_text(sess.status))
+        t.append(f"   {sess.session_id[:8]}", style="#64748b")
+        if sess.workflows:
+            t.append(f" · wf:{len(sess.workflows)}", style="#38bdf8")
+        if sess.subagents:
+            t.append(f" · sub:{len(sess.subagents)}", style="#c46a6a")
+        if sess.touched_files:
+            t.append(f" · arch:{len(sess.touched_files)}", style="#9aa59c")
+        if sess.status == "pending" or sess.pending_reason:
+            reason = sess.pending_reason or "Esperando acción del usuario"
+            t.append(f"\n⚠ PENDING: {reason}", style="bold #fbbf24")
+        return t
+    t.append("\n")
     t.append_text(status_text(sess.status))
     t.append(f"   {sess.session_id[:8]}", style="#64748b")
     if sess.meta:
         t.append(f"   {sess.meta}", style="#8aa8cc")
+    if sess.status == "pending" or sess.pending_reason:
+        reason = sess.pending_reason or "Esperando aprobación o respuesta del usuario"
+        t.append("\n⚠ PENDING   ", style="bold #fbbf24")
+        t.append(reason, style="bold #fde68a")
+    if sess.workflows:
+        t.append("\nWorkflows   ", style="bold #94a3b8")
+        t.append(" · ".join(sess.workflows[:6]), style="#38bdf8")
     if sess.subagents:
         t.append("\nSubagentes  ", style="bold #94a3b8")
-        t.append(", ".join(sess.subagents), style="#c46a6a")
+        t.append(", ".join(sess.subagents[:6]), style="#c46a6a")
+    if sess.touched_files:
+        t.append("\nArchivos    ", style="bold #94a3b8")
+        shown = ", ".join(sess.touched_files[:6])
+        if len(sess.touched_files) > 6:
+            shown += f" (+{len(sess.touched_files) - 6} más)"
+        t.append(shown, style="#9aa59c")
     if sess.recent_tools:
         t.append("\nTools       ", style="bold #94a3b8")
-        t.append(" · ".join(sess.recent_tools), style="#d9b15f")
+        t.append(" · ".join(sess.recent_tools[:10]), style="#d9b15f")
     return t
+
+
+def format_subagent_graph(
+    sess: Optional[AgentSessionInfo],
+    all_sessions: Sequence[AgentSessionInfo] = (),
+    all_tasks: Sequence[AgentTaskInfo] = (),
+) -> Text:
+    """Render an interactive-style Rich topology graph of the coordinator session, its subagents, and message edges."""
+    out = Text()
+    if sess is None:
+        out.append("Selecciona una sesión en la tabla izquierda para visualizar su grafo de subagentes.", style="#64748b")
+        return out
+
+    # Collect subagent tasks belonging to this session
+    sess_sub_tasks: List[AgentTaskInfo] = [
+        tk
+        for tk in all_tasks
+        if tk.session_id == sess.session_id and tk.kind in ("subagent", "workflow")
+    ]
+    for tk in getattr(sess, "tasks", ()) or ():
+        if tk.kind in ("subagent", "workflow") and all(tk.id != x.id for x in sess_sub_tasks):
+            sess_sub_tasks.append(tk)
+
+    # Build unified subagent node list preserving order
+    nodes: List[Dict[str, Any]] = []
+    seen_names: set = set()
+
+    for tk in sess_sub_tasks:
+        raw_title = tk.title or tk.id
+        role_name = raw_title.split(":", 1)[1].strip() if ":" in raw_title else raw_title
+        key_l = role_name.lower()
+        if key_l in seen_names:
+            continue
+        seen_names.add(key_l)
+        seen_names.add(raw_title.lower())
+        detail = tk.tail_lines[-1] if tk.tail_lines else ""
+        nodes.append(
+            {
+                "name": role_name,
+                "agent_type": tk.agent_type or tk.kind or "subagent",
+                "status": tk.status,
+                "dt": format_task_datetime(tk.started_at, tk.updated_at),
+                "detail": detail,
+                "kind": tk.kind,
+            }
+        )
+
+    for sub_name in sess.subagents:
+        clean_sub = sub_name.strip()
+        if not clean_sub or clean_sub.lower() in seen_names:
+            continue
+        seen_names.add(clean_sub.lower())
+        nodes.append(
+            {
+                "name": clean_sub,
+                "agent_type": "subagent",
+                "status": "active" if sess.status in ("running", "active") else "finished",
+                "dt": "",
+                "detail": "",
+                "kind": "subagent",
+            }
+        )
+
+    # Extract inter-agent interactions (invoke_subagent / send_message / recv_message / SendMessage / swarm)
+    interactions: List[Tuple[str, str, str]] = []
+    for act in sess.activities:
+        summ = act.summary.strip()
+        low = summ.lower()
+        if low.startswith("recv_message"):
+            interactions.append((act.timestamp[:8], "recv", summ))
+        elif low.startswith(("send_message", "sendmessage", "swarm:")):
+            interactions.append((act.timestamp[:8], "msg", summ))
+        elif low.startswith(("subagent:", "agent:", "task:", "run_workflow:", "workflow:")):
+            interactions.append((act.timestamp[:8], "spawn", summ))
+
+    # 1. Root Coordinator Box
+    out.append("╭── ◆ COORDINADOR · ", style="bold #38bdf8")
+    out.append_text(agent_badge(sess.tool))
+    out.append(f" {sess.title} ", style="bold #f8fafc")
+    out.append(f"({sess.session_id[:8]}) · ", style="#64748b")
+    out.append_text(status_text(sess.status))
+    out.append("\n│   ", style="bold #38bdf8")
+    out.append(f"Subagentes: {len(nodes)}", style="bold #c46a6a")
+    out.append(f"  ·  Workflows: {len(sess.workflows)}", style="#38bdf8")
+    out.append(f"  ·  Archivos: {len(sess.touched_files)}", style="#9aa59c")
+    out.append(f"  ·  Tools: {len(sess.recent_tools)}\n", style="#d9b15f")
+    if sess.workflows:
+        out.append("│   ", style="bold #38bdf8")
+        out.append("Pipeline: ", style="bold #94a3b8")
+        out.append(" ──► ".join(sess.workflows[:6]) + "\n", style="#38bdf8")
+    out.append("╰───┬──────────────────────────────────────────────────────────────────────\n", style="bold #38bdf8")
+
+    # 2. Subagent Nodes & Edges
+    if not nodes:
+        out.append("    │\n", style="#475569")
+        out.append("    ╰── ○ Sin subagentes delegados en esta sesión todavía.\n", style="#64748b")
+        out.append("        (Cuando el agente invoca subagentes, swarm o workflows, aparecen aquí en tiempo real)\n", style="#475569")
+    else:
+        for idx, node in enumerate(nodes):
+            is_last = idx == len(nodes) - 1 and not interactions
+            branch = "    ╰─" if is_last else "    ├─"
+            pipe = "      " if is_last else "    │ "
+            edge_lbl = "workflow" if node["kind"] == "workflow" else "spawn"
+
+            out.append("    │\n", style="#475569")
+            out.append(branch, style="bold #475569")
+            out.append(f"──[{edge_lbl}]──► ", style="bold #d9b15f")
+            out.append("● ", style="bold #c46a6a")
+            out.append(node["name"], style="bold #f8fafc")
+            if node["agent_type"] and node["agent_type"].lower() != node["name"].lower():
+                out.append(f" [{node['agent_type']}]", style="#8aa8cc")
+            out.append("  ", style="#475569")
+            out.append_text(status_text(node["status"]))
+            if node["dt"] and node["dt"] != "-":
+                out.append(f"  ·  {node['dt']}", style="#64748b")
+            out.append("\n")
+
+            if node["detail"]:
+                out.append(pipe, style="#475569")
+                if node["status"] in ("finished", "completed", "done"):
+                    out.append("   ◄──[report]── ", style="bold #34d399")
+                else:
+                    out.append("   ──[working]─► ", style="bold #fbbf24")
+                out.append(node["detail"][:96] + "\n", style="#cbd5e1")
+
+    # 3. Inter-Agent Message & Delegation Bus
+    if interactions:
+        out.append("    │\n", style="#475569")
+        out.append("    ╰── ◆ FLUJO DE INTERACCIÓN & MENSAJES ENTRE AGENTES\n", style="bold #a78bfa")
+        for ts, ikind, summ in interactions[-10:]:
+            out.append("        ", style="#475569")
+            out.append(f"{ts}  ", style="#64748b")
+            if ikind == "recv":
+                out.append("COORDINADOR ◄──[recv_message]─── ", style="bold #34d399")
+                out.append(summ + "\n", style="#e2e8f0")
+            elif ikind == "msg":
+                out.append("COORDINADOR ──[send_message]──► ", style="bold #a78bfa")
+                out.append(summ + "\n", style="#e2e8f0")
+            else:
+                out.append("COORDINADOR ──[delegate]──────► ", style="bold #d9b15f")
+                out.append(summ + "\n", style="#cbd5e1")
+
+    # 4. Other active multi-agent sessions in the project
+    other_multi = [
+        s for s in all_sessions if s.session_id != sess.session_id and (s.subagents or s.workflows)
+    ]
+    if other_multi:
+        out.append("\n◆ OTRAS SESIONES CON SUBAGENTES EN EL PROYECTO\n", style="bold #94a3b8")
+        for osess in other_multi[:4]:
+            out.append("  • ", style="#475569")
+            out.append_text(agent_badge(osess.tool))
+            out.append(f" {osess.title[:30]} ", style="bold #cbd5e1")
+            out.append_text(status_text(osess.status))
+            out.append(f" ──► {len(osess.subagents)} subagente(s)", style="#c46a6a")
+            if osess.subagents:
+                out.append(f" ({', '.join(osess.subagents[:4])})", style="#94a3b8")
+            out.append("\n")
+
+    return out
 
 
 SEVERITY_COLORS = {"critical": "#c46a6a", "high": "#c46a6a", "medium": "#d9b15f", "low": "#9aa59c"}

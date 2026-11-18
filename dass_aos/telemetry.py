@@ -56,8 +56,25 @@ _TOOL_CATEGORY_MAP = {
 
 # Incremental byte-offset cache keyed by resolved JSONL path string.
 _TOKEN_FILE_CACHE: Dict[str, Dict[str, Any]] = {}
+# Incremental file stat cache keyed by `<namespace>:<path>` -> (mtime_ns, size, cached_value).
+_STAT_CACHE: Dict[str, Tuple[int, int, Any]] = {}
 # Session list shows the most recent conversations; token totals cover all of the project's.
 _MAX_LISTED_SESSIONS = 15
+
+
+def _cached_by_stat(namespace: str, path: Path, builder: Any) -> Any:
+    """Return cached result when `(st_mtime_ns, st_size)` has not changed (`CA-1`)."""
+    key = f"{namespace}:{path}"
+    try:
+        st = path.stat()
+    except OSError:
+        return builder()
+    entry = _STAT_CACHE.get(key)
+    if entry is not None and entry[0] == st.st_mtime_ns and entry[1] == st.st_size:
+        return entry[2]
+    val = builder()
+    _STAT_CACHE[key] = (st.st_mtime_ns, st.st_size, val)
+    return val
 
 
 @dataclass
@@ -105,7 +122,7 @@ class GitSnapshot:
 
 @dataclass
 class AgentTaskInfo:
-    """Background task or sub-task tracked by an AI tool."""
+    """Background task, subagent, workflow, or scheduled job tracked by an AI tool."""
 
     id: str
     agent: str
@@ -113,8 +130,24 @@ class AgentTaskInfo:
     title: str = ""
     session_id: str = ""
     log_path: Optional[Path] = None
+    started_at: float = 0.0
     updated_at: float = 0.0
     tail_lines: List[str] = field(default_factory=list)
+    kind: str = "task"  # task | subagent | workflow | cron
+    agent_type: str = ""
+
+    def __post_init__(self) -> None:
+        if self.started_at <= 0.0 and self.updated_at > 0.0:
+            self.started_at = self.updated_at
+        elif self.updated_at <= 0.0 and self.started_at > 0.0:
+            self.updated_at = self.started_at
+
+    @property
+    def duration_seconds(self) -> float:
+        if self.started_at <= 0.0:
+            return 0.0
+        end = self.updated_at if self.updated_at >= self.started_at else time.time()
+        return max(0.0, end - self.started_at)
 
 
 @dataclass
@@ -142,6 +175,12 @@ class AgentSessionInfo:
     tasks: List[AgentTaskInfo] = field(default_factory=list)
     activities: List[AgentActivityItem] = field(default_factory=list)
     meta: str = ""
+    pending_reason: str = ""
+    workflows: List[str] = field(default_factory=list)
+    touched_files: List[str] = field(default_factory=list)
+    voice_active: bool = False
+    last_assistant_text: str = ""
+    summary_title: str = ""
 
 
 @dataclass
@@ -279,46 +318,49 @@ def _read_head_bytes(path: Path, max_bytes: int = 65_536) -> str:
 
 
 def _parse_plan_detail(path: Path) -> PlanDetail:
-    try:
-        raw = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return PlanDetail(path=path, title=path.stem, status="unknown", total=0, done=0)
+    def _build() -> PlanDetail:
+        try:
+            raw = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return PlanDetail(path=path, title=path.stem, status="unknown", total=0, done=0)
 
-    meta = read_frontmatter(path)
-    title = path.stem
-    phases: List[PhaseItem] = []
-    done_count = 0
-    current_phase: Optional[PhaseItem] = None
+        meta = read_frontmatter(path)
+        title = path.stem
+        phases: List[PhaseItem] = []
+        done_count = 0
+        current_phase: Optional[PhaseItem] = None
 
-    for line in raw.splitlines():
-        if line.startswith("# ") and title == path.stem:
-            title = line[2:].strip()
-            continue
-        match = _PHASE_RE.match(line)
-        if match:
-            is_done = match.group(1).lower() == "x"
-            if is_done:
-                done_count += 1
-            current_phase = PhaseItem(done=is_done, text=match.group(2).strip())
-            phases.append(current_phase)
-        elif current_phase is not None:
-            stripped = line.strip()
-            if stripped.startswith("- "):
-                current_phase.details.append(stripped[2:].strip())
-            elif stripped == "" or line.startswith("#"):
-                if line.startswith("#"):
-                    current_phase = None
+        for line in raw.splitlines():
+            if line.startswith("# ") and title == path.stem:
+                title = line[2:].strip()
+                continue
+            match = _PHASE_RE.match(line)
+            if match:
+                is_done = match.group(1).lower() == "x"
+                if is_done:
+                    done_count += 1
+                current_phase = PhaseItem(done=is_done, text=match.group(2).strip())
+                phases.append(current_phase)
+            elif current_phase is not None:
+                stripped = line.strip()
+                if stripped.startswith("- "):
+                    current_phase.details.append(stripped[2:].strip())
+                elif stripped == "" or line.startswith("#"):
+                    if line.startswith("#"):
+                        current_phase = None
 
-    return PlanDetail(
-        path=path,
-        title=title,
-        status=meta.get("status", "active"),
-        total=len(phases),
-        done=done_count,
-        phases=phases,
-        unanswered_questions=count_unanswered_questions(raw),
-        raw_markdown=raw,
-    )
+        return PlanDetail(
+            path=path,
+            title=title,
+            status=meta.get("status", "active"),
+            total=len(phases),
+            done=done_count,
+            phases=phases,
+            unanswered_questions=count_unanswered_questions(raw),
+            raw_markdown=raw,
+        )
+
+    return _cached_by_stat("plan", path, _build)
 
 
 def _list_markdown_files(directory: Path) -> List[Path]:
@@ -416,101 +458,468 @@ def _find_claude_project_dir(project_root: Path, claude_home: Path) -> Optional[
     return None
 
 
+def _relativize_project_path(raw_path: str, project_root: Path) -> str:
+    text = str(raw_path or "").strip()
+    if not text:
+        return ""
+    try:
+        resolved = Path(text).resolve()
+        root_res = project_root.resolve()
+        rel = resolved.relative_to(root_res)
+        return str(rel).replace("\\", "/")
+    except (OSError, ValueError):
+        return text.replace("\\", "/")
+
+
+def _extract_first_question(questions_obj: Any) -> str:
+    if isinstance(questions_obj, list):
+        for q in questions_obj:
+            if isinstance(q, dict) and q.get("question"):
+                return str(q["question"]).strip()
+    return ""
+
+
 def _parse_claude_jsonl(
     jsonl_path: Path,
     default_title: str,
-) -> Tuple[str, List[str], List[str], List[AgentActivityItem], str]:
-    title = default_title
-    tools: List[str] = []
-    subagents: List[str] = []
-    activities: List[AgentActivityItem] = []
-    meta_parts: List[str] = []
+    project_root: Optional[Path] = None,
+) -> Dict[str, Any]:
+    def _build() -> Dict[str, Any]:
+        title = default_title
+        tools: List[str] = []
+        subagents: List[str] = []
+        workflows: List[str] = []
+        touched_files: List[str] = []
+        inline_tasks: List[AgentTaskInfo] = []
+        activities: List[AgentActivityItem] = []
+        meta_parts: List[str] = []
+        pending_tools: Dict[str, Tuple[str, str]] = {}
+        voice_active = False
+        last_assistant_text = ""
 
-    for line in _read_tail_lines(jsonl_path):
-        line = line.strip()
-        if not line:
-            continue
         try:
-            obj = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(obj, dict):
-            continue
+            fallback_ts = jsonl_path.stat().st_mtime
+        except OSError:
+            fallback_ts = time.time()
 
-        ev_type = obj.get("type", "")
-        ts = str(obj.get("timestamp") or "")[11:19] or "--:--:--"
+        sid = jsonl_path.stem
+        for line in _read_tail_lines(jsonl_path):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(obj, dict):
+                continue
 
-        if ev_type == "ai-title" and obj.get("aiTitle"):
-            title = str(obj["aiTitle"]).strip()
-        elif ev_type == "tools-used" and isinstance(obj.get("tools"), list):
-            for tool_name in obj["tools"]:
-                if isinstance(tool_name, str) and tool_name not in tools:
-                    tools.append(tool_name)
-        elif ev_type == "cost-state":
-            cost = obj.get("totalCostUSD")
-            added = obj.get("totalLinesAdded")
-            parts = []
-            if isinstance(cost, (int, float)):
-                parts.append(f"${cost:.2f}")
-            if isinstance(added, int) and added > 0:
-                parts.append(f"+{added} líneas")
-            if parts:
-                meta_parts = parts
-        elif ev_type == "assistant":
-            msg = obj.get("message") or {}
-            content = msg.get("content") if isinstance(msg, dict) else None
-            if isinstance(content, list):
-                for block in content:
-                    if not isinstance(block, dict) or block.get("type") != "tool_use":
-                        continue
-                    tname = str(block.get("name") or "tool")
-                    if tname not in tools:
-                        tools.append(tname)
-                    inp = block.get("input") or {}
-                    detail = ""
-                    if isinstance(inp, dict):
-                        if tname in ("Agent", "Task"):
-                            desc = str(inp.get("description") or inp.get("subagent_type") or "").strip()
-                            if desc and desc not in subagents:
-                                subagents.append(desc)
-                            detail = desc
-                        elif inp.get("file_path"):
-                            detail = Path(str(inp["file_path"])).name
-                        elif inp.get("command"):
-                            detail = str(inp["command"])[:48]
-                    summary = f"{tname}: {detail}" if detail else tname
-                    activities.append(AgentActivityItem(timestamp=ts, agent="claude", kind="tool", summary=summary))
+            ev_type = obj.get("type", "")
+            raw_ts = obj.get("timestamp")
+            ev_ts = _parse_timestamp(raw_ts, fallback=fallback_ts)
+            ts = str(raw_ts or "")[11:19] or "--:--:--"
 
-    return title, tools[-12:], subagents[-12:], activities[-20:], " · ".join(meta_parts)
+            if ev_type == "ai-title" and obj.get("aiTitle"):
+                title = str(obj["aiTitle"]).strip()
+            elif ev_type == "custom-title" and obj.get("customTitle"):
+                title = str(obj["customTitle"]).strip()
+            elif ev_type == "mode":
+                mode_val = str(obj.get("mode") or "").lower()
+                if "voice" in mode_val:
+                    voice_active = True
+            elif ev_type == "file-history-delta":
+                tpath = str(obj.get("trackingPath") or "").strip()
+                if tpath:
+                    rel = _relativize_project_path(tpath, project_root) if project_root else tpath
+                    if rel and rel not in touched_files:
+                        touched_files.append(rel)
+            elif ev_type == "tools-used" and isinstance(obj.get("tools"), list):
+                for tool_name in obj["tools"]:
+                    if isinstance(tool_name, str) and tool_name not in tools:
+                        tools.append(tool_name)
+            elif ev_type == "cost-state":
+                cost = obj.get("totalCostUSD")
+                added = obj.get("totalLinesAdded")
+                parts = []
+                if isinstance(cost, (int, float)):
+                    parts.append(f"${cost:.2f}")
+                if isinstance(added, int) and added > 0:
+                    parts.append(f"+{added} líneas")
+                if parts:
+                    meta_parts = parts
+            elif ev_type == "user":
+                msg = obj.get("message") or {}
+                content = msg.get("content") if isinstance(msg, dict) else None
+                if isinstance(content, str):
+                    if "/voice" in content.lower():
+                        voice_active = True
+                    pending_tools.clear()
+                elif isinstance(content, list):
+                    for block in content:
+                        if not isinstance(block, dict):
+                            continue
+                        btype = block.get("type")
+                        if btype == "tool_result":
+                            tuid = str(block.get("tool_use_id") or "")
+                            pending_tools.pop(tuid, None)
+                        elif btype == "text":
+                            txt = str(block.get("text") or "")
+                            if "/voice" in txt.lower():
+                                voice_active = True
+                            pending_tools.clear()
+            elif ev_type == "assistant":
+                msg = obj.get("message") or {}
+                content = msg.get("content") if isinstance(msg, dict) else None
+                stop_reason = str(msg.get("stop_reason") or "") if isinstance(msg, dict) else ""
+                if stop_reason and stop_reason != "tool_use":
+                    pending_tools.clear()
+                if isinstance(content, list):
+                    for block in content:
+                        if not isinstance(block, dict):
+                            continue
+                        btype = block.get("type")
+                        if btype == "text" and block.get("text"):
+                            txt_val = str(block["text"]).strip()
+                            if txt_val:
+                                last_assistant_text = txt_val
+                            continue
+                        if btype != "tool_use":
+                            continue
+                        tname = str(block.get("name") or "tool")
+                        tuid = str(block.get("id") or f"tu-{len(activities)}")
+                        if tname not in tools:
+                            tools.append(tname)
+                        inp = block.get("input") or {}
+                        detail = ""
+                        if isinstance(inp, dict):
+                            if tname in ("Agent", "Task"):
+                                desc = str(inp.get("description") or inp.get("subagent_type") or "").strip()
+                                if desc and desc not in subagents:
+                                    subagents.append(desc)
+                                detail = desc
+                                if inp.get("run_in_background"):
+                                    inline_tasks.append(
+                                        AgentTaskInfo(
+                                            id=tuid,
+                                            agent="claude-code",
+                                            status="running",
+                                            title=desc or tname,
+                                            session_id=sid,
+                                            log_path=jsonl_path,
+                                            started_at=ev_ts,
+                                            updated_at=ev_ts,
+                                            tail_lines=[f"[{tname}] {desc}"],
+                                            kind="subagent",
+                                            agent_type=str(inp.get("subagent_type") or "agent"),
+                                        )
+                                    )
+                            elif tname == "Workflow":
+                                spath = str(inp.get("scriptPath") or inp.get("workflow") or "").strip()
+                                wname = Path(spath).name if spath else "workflow"
+                                wlabel = f"Workflow: {wname}"
+                                if wlabel not in workflows:
+                                    workflows.append(wlabel)
+                                detail = wname
+                                inline_tasks.append(
+                                    AgentTaskInfo(
+                                        id=tuid,
+                                        agent="claude-code",
+                                        status="finished",
+                                        title=wlabel,
+                                        session_id=sid,
+                                        log_path=jsonl_path,
+                                        started_at=ev_ts,
+                                        updated_at=ev_ts,
+                                        tail_lines=[f"Workflow {spath}"],
+                                        kind="workflow",
+                                    )
+                                )
+                            elif tname == "Skill":
+                                sk_name = str(inp.get("skill") or "").strip()
+                                if sk_name:
+                                    slabel = f"Skill: {sk_name}"
+                                    if slabel not in workflows:
+                                        workflows.append(slabel)
+                                    detail = sk_name
+                            elif tname in ("EnterPlanMode", "ExitPlanMode"):
+                                plabel = f"PlanMode ({tname})"
+                                if plabel not in workflows:
+                                    workflows.append(plabel)
+                                detail = tname
+                            elif tname == "SendMessage":
+                                to_target = str(inp.get("to") or inp.get("recipient") or "agent").strip()
+                                msg_preview = str(inp.get("summary") or inp.get("message") or "").strip()[:48]
+                                detail = f"-> {to_target}: {msg_preview}".rstrip(": ")
+                            elif tname == "CronCreate":
+                                cron_expr = str(inp.get("cron") or "").strip()
+                                cron_prompt = str(inp.get("prompt") or "").strip()[:40]
+                                detail = f"{cron_expr} {cron_prompt}".strip()
+                                inline_tasks.append(
+                                    AgentTaskInfo(
+                                        id=tuid,
+                                        agent="claude-code",
+                                        status="running",
+                                        title=f"cron: {detail}",
+                                        session_id=sid,
+                                        log_path=jsonl_path,
+                                        started_at=ev_ts,
+                                        updated_at=ev_ts,
+                                        tail_lines=[f"[cron {cron_expr}] {cron_prompt}"],
+                                        kind="cron",
+                                    )
+                                )
+                            elif inp.get("file_path") or inp.get("notebook_path"):
+                                raw_fp = str(inp.get("file_path") or inp.get("notebook_path"))
+                                detail = Path(raw_fp).name
+                                if tname in ("Write", "Edit", "NotebookEdit"):
+                                    rel = _relativize_project_path(raw_fp, project_root) if project_root else raw_fp
+                                    if rel and rel not in touched_files:
+                                        touched_files.append(rel)
+                            elif inp.get("command"):
+                                cmd_str = str(inp["command"])
+                                detail = cmd_str[:48]
+                                if inp.get("run_in_background"):
+                                    inline_tasks.append(
+                                        AgentTaskInfo(
+                                            id=tuid,
+                                            agent="claude-code",
+                                            status="running",
+                                            title=f"{tname}: {detail}",
+                                            session_id=sid,
+                                            log_path=jsonl_path,
+                                            started_at=ev_ts,
+                                            updated_at=ev_ts,
+                                            tail_lines=[f"$ {cmd_str}"],
+                                            kind="task",
+                                        )
+                                    )
+
+                            # Track pending reason until tool_result arrives
+                            if tname == "AskUserQuestion":
+                                q_txt = _extract_first_question(inp.get("questions"))
+                                pending_tools[tuid] = (tname, f"Pregunta: {q_txt}" if q_txt else "Pregunta al usuario")
+                            elif tname == "ExitPlanMode":
+                                pending_tools[tuid] = (tname, "Aprobación de plan (ExitPlanMode)")
+                            elif stop_reason == "tool_use":
+                                pending_tools[tuid] = (
+                                    tname,
+                                    f"Permiso/ejecución pendiente: {tname}" + (f" ({detail})" if detail else ""),
+                                )
+
+                        summary = f"{tname}: {detail}" if detail else tname
+                        activities.append(AgentActivityItem(timestamp=ts, agent="claude", kind="tool", summary=summary))
+
+        # Mark inline tasks finished if their tool_result arrived
+        for tk in inline_tasks:
+            if tk.id not in pending_tools and tk.kind in ("task", "subagent"):
+                tk.status = "finished"
+
+        pending_reason = ""
+        if pending_tools:
+            _, pending_reason = list(pending_tools.values())[-1]
+
+        return {
+            "title": title,
+            "tools": tools[-12:],
+            "subagents": subagents[-12:],
+            "workflows": workflows[-12:],
+            "touched_files": touched_files[-25:],
+            "inline_tasks": inline_tasks[-15:],
+            "activities": activities[-20:],
+            "meta": " · ".join(meta_parts),
+            "pending_reason": pending_reason,
+            "voice_active": voice_active,
+            "last_assistant_text": last_assistant_text,
+        }
+
+    return _cached_by_stat("claude_jsonl", jsonl_path, _build)
 
 
-def _collect_claude_tasks(session_id: str, claude_home: Path) -> List[AgentTaskInfo]:
-    tasks_dir = claude_home / "tasks" / session_id
-    if not tasks_dir.is_dir():
-        return []
-    tasks: List[AgentTaskInfo] = []
-    for path in sorted(tasks_dir.glob("*.json")):
+def _parse_claude_subagent_pair(meta_path: Optional[Path], jsonl_path: Optional[Path], session_id: str) -> Optional[AgentTaskInfo]:
+    anchor = jsonl_path or meta_path
+    if anchor is None:
+        return None
+
+    def _build() -> Optional[AgentTaskInfo]:
+        meta: Dict[str, Any] = {}
+        if meta_path and meta_path.is_file():
+            try:
+                loaded = json.loads(meta_path.read_text(encoding="utf-8", errors="replace"))
+                if isinstance(loaded, dict):
+                    meta = loaded
+            except (OSError, ValueError):
+                pass
+
+        stem = anchor.stem.replace(".meta", "")
+        agent_type = str(meta.get("agentType") or "subagent").strip()
+        desc = str(meta.get("description") or stem).strip()
+        finished = bool(meta.get("finished"))
+
         try:
-            data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
-        except (OSError, ValueError):
-            continue
-        if not isinstance(data, dict):
-            continue
-        tid = str(data.get("id") or path.stem)
-        subject = str(data.get("subject") or data.get("activeForm") or tid)
-        status = str(data.get("status") or "pending")
-        tasks.append(
-            AgentTaskInfo(
-                id=tid,
-                agent="claude-code",
-                status=status,
-                title=subject,
-                session_id=session_id,
-                log_path=path,
-                updated_at=path.stat().st_mtime,
-                tail_lines=[f"[{status}] {subject}"],
-            )
+            st = anchor.stat()
+            started_at = min(st.st_ctime, st.st_mtime)
+            updated_at = st.st_mtime
+        except OSError:
+            started_at = updated_at = time.time()
+
+        tail_lines: List[str] = [f"[{agent_type}] {desc}"]
+        if jsonl_path and jsonl_path.is_file():
+            try:
+                jst = jsonl_path.stat()
+                updated_at = max(updated_at, jst.st_mtime)
+            except OSError:
+                pass
+            head_chunk = _read_head_bytes(jsonl_path, 4096)
+            first_line = next((ln.strip() for ln in head_chunk.splitlines() if ln.strip()), "")
+            if first_line:
+                try:
+                    fobj = json.loads(first_line)
+                    if isinstance(fobj, dict) and fobj.get("timestamp"):
+                        started_at = _parse_timestamp(fobj.get("timestamp"), fallback=started_at)
+                except ValueError:
+                    pass
+            raw_tail = _read_tail_lines(jsonl_path, max_bytes=32_768, max_lines=30)
+            for rln in raw_tail[-12:]:
+                try:
+                    robj = json.loads(rln)
+                except ValueError:
+                    continue
+                if not isinstance(robj, dict):
+                    continue
+                if robj.get("timestamp"):
+                    updated_at = _parse_timestamp(robj.get("timestamp"), fallback=updated_at)
+                msg = robj.get("message") or {}
+                content = msg.get("content") if isinstance(msg, dict) else None
+                if isinstance(content, list):
+                    for blk in content:
+                        if isinstance(blk, dict):
+                            if blk.get("type") == "tool_use":
+                                tail_lines.append(f"▸ {blk.get('name', 'tool')}")
+                            elif blk.get("type") == "text" and blk.get("text"):
+                                tail_lines.append(str(blk["text"]).strip()[:120])
+
+        status = "finished" if finished else "running"
+        return AgentTaskInfo(
+            id=stem,
+            agent="claude-code",
+            status=status,
+            title=f"{agent_type}: {desc}" if desc != stem else stem,
+            session_id=session_id,
+            log_path=jsonl_path or meta_path,
+            started_at=started_at,
+            updated_at=max(started_at, updated_at),
+            tail_lines=tail_lines[-_MAX_TASK_TAIL_LINES:],
+            kind="subagent",
+            agent_type=agent_type,
         )
+
+    key = f"claude_subagent:{meta_path}:{jsonl_path}"
+    sig_mtime = 0
+    sig_size = 0
+    for p in (meta_path, jsonl_path):
+        if p is not None:
+            try:
+                pst = p.stat()
+                sig_mtime ^= pst.st_mtime_ns
+                sig_size += pst.st_size
+            except OSError:
+                pass
+    entry = _STAT_CACHE.get(key)
+    if entry is not None and entry[0] == sig_mtime and entry[1] == sig_size:
+        return entry[2]
+    val = _build()
+    _STAT_CACHE[key] = (sig_mtime, sig_size, val)
+    return val
+
+
+def _collect_claude_tasks(
+    session_id: str,
+    claude_home: Path,
+    proj_dir: Optional[Path] = None,
+    inline_tasks: Sequence[AgentTaskInfo] = (),
+) -> List[AgentTaskInfo]:
+    tasks: List[AgentTaskInfo] = list(inline_tasks)
+    tasks_dir = claude_home / "tasks" / session_id
+    if tasks_dir.is_dir():
+        for path in sorted(tasks_dir.glob("*.json")):
+            try:
+                st = path.stat()
+                data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(data, dict):
+                continue
+            tid = str(data.get("id") or path.stem)
+            subject = str(data.get("subject") or data.get("activeForm") or tid)
+            status = str(data.get("status") or "pending")
+            started_at = _parse_timestamp(
+                data.get("createdAt") or data.get("startedAt"),
+                fallback=min(st.st_ctime, st.st_mtime),
+            )
+            updated_at = _parse_timestamp(data.get("updatedAt"), fallback=st.st_mtime)
+            tasks.append(
+                AgentTaskInfo(
+                    id=tid,
+                    agent="claude-code",
+                    status=status,
+                    title=subject,
+                    session_id=session_id,
+                    log_path=path,
+                    started_at=started_at,
+                    updated_at=max(started_at, updated_at),
+                    tail_lines=[f"[{status}] {subject}"],
+                    kind="task",
+                )
+            )
+
+    if proj_dir is not None:
+        sess_dir = proj_dir / session_id
+        sub_dir = sess_dir / "subagents"
+        if sub_dir.is_dir():
+            stems = sorted({
+                p.name.replace(".meta.json", "").replace(".jsonl", "")
+                for p in sub_dir.iterdir()
+                if p.name.endswith(".meta.json") or p.name.endswith(".jsonl")
+            })
+            for stem in stems:
+                meta_p = sub_dir / f"{stem}.meta.json"
+                jsonl_p = sub_dir / f"{stem}.jsonl"
+                sub_info = _parse_claude_subagent_pair(
+                    meta_p if meta_p.is_file() else None,
+                    jsonl_p if jsonl_p.is_file() else None,
+                    session_id,
+                )
+                if sub_info is not None:
+                    tasks.append(sub_info)
+
+        tr_dir = sess_dir / "tool-results"
+        if tr_dir.is_dir():
+            for txt_path in sorted(tr_dir.glob("*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)[:10]:
+                try:
+                    st = txt_path.stat()
+                except OSError:
+                    continue
+                tail = _cached_by_stat(
+                    "claude_tr",
+                    txt_path,
+                    lambda p=txt_path: _read_tail_lines(p, max_bytes=16_384, max_lines=_MAX_TASK_TAIL_LINES),
+                )
+                tasks.append(
+                    AgentTaskInfo(
+                        id=txt_path.stem,
+                        agent="claude-code",
+                        status="finished",
+                        title=f"output: {txt_path.stem}",
+                        session_id=session_id,
+                        log_path=txt_path,
+                        started_at=min(st.st_ctime, st.st_mtime),
+                        updated_at=st.st_mtime,
+                        tail_lines=tail,
+                        kind="task",
+                    )
+                )
+
+    tasks.sort(key=lambda t: t.updated_at, reverse=True)
     return tasks
 
 
@@ -589,10 +998,13 @@ def _read_new_jsonl_lines(path: Path, kind: str) -> Tuple[Dict[str, Any], List[D
     return state, parsed
 
 
-def _update_claude_token_file(jpath: Path) -> Dict[str, Any]:
+def _update_claude_token_file(jpath: Path, project_root: Optional[Path] = None) -> Dict[str, Any]:
     """Incrementally fold new lines of one Claude JSONL into its cached per-request turn map."""
     state, new_objs = _read_new_jsonl_lines(jpath, "claude")
     turns: Dict[str, Dict[str, Any]] = state["turns"]
+    subagents: List[str] = state.setdefault("subagents", [])
+    workflows: List[str] = state.setdefault("workflows", [])
+    touched_files: List[str] = state.setdefault("touched_files", [])
     for idx, obj in enumerate(new_objs):
         ev_type = obj.get("type", "")
         if ev_type == "cost-state" and isinstance(obj.get("totalCostUSD"), (int, float)):
@@ -601,11 +1013,49 @@ def _update_claude_token_file(jpath: Path) -> Dict[str, Any]:
         if ev_type == "ai-title" and obj.get("aiTitle"):
             state["title"] = str(obj["aiTitle"]).strip()
             continue
+        if ev_type == "file-history-delta":
+            tpath = str(obj.get("trackingPath") or "").strip()
+            if tpath:
+                rel = _relativize_project_path(tpath, project_root) if project_root else tpath
+                if rel and rel not in touched_files:
+                    touched_files.append(rel)
+            continue
         if ev_type != "assistant":
             continue
         msg = obj.get("message")
         if not isinstance(msg, dict):
             continue
+        content = msg.get("content")
+        if isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "tool_use":
+                    continue
+                tname = str(block.get("name") or "tool")
+                inp = block.get("input") if isinstance(block.get("input"), dict) else {}
+                if tname in ("Agent", "Task"):
+                    desc = str(inp.get("description") or inp.get("subagent_type") or "").strip()
+                    if desc and desc not in subagents:
+                        subagents.append(desc)
+                elif tname == "Workflow":
+                    spath = str(inp.get("scriptPath") or inp.get("workflow") or "").strip()
+                    wlabel = f"Workflow: {Path(spath).name if spath else 'workflow'}"
+                    if wlabel not in workflows:
+                        workflows.append(wlabel)
+                elif tname == "Skill" and inp.get("skill"):
+                    slabel = f"Skill: {inp['skill']}"
+                    if slabel not in workflows:
+                        workflows.append(slabel)
+                elif tname in ("EnterPlanMode", "ExitPlanMode"):
+                    plabel = f"PlanMode ({tname})"
+                    if plabel not in workflows:
+                        workflows.append(plabel)
+                elif tname in ("Write", "Edit", "NotebookEdit"):
+                    raw_fp = str(inp.get("file_path") or inp.get("notebook_path") or "").strip()
+                    if raw_fp:
+                        rel = _relativize_project_path(raw_fp, project_root) if project_root else raw_fp
+                        if rel and rel not in touched_files:
+                            touched_files.append(rel)
+
         usage = msg.get("usage")
         if not isinstance(usage, dict):
             continue
@@ -630,7 +1080,6 @@ def _update_claude_token_file(jpath: Path) -> Dict[str, Any]:
         entry["think"] = max(entry["think"], think_tok)
         state["last_ctx"] = max(in_new + cache_read, 0)
 
-        content = msg.get("content")
         if isinstance(content, list):
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "tool_use":
@@ -645,6 +1094,7 @@ def _parse_claude_tokens(
     title: str,
     subagent_paths: Sequence[Path] = (),
     counted: Optional[set] = None,
+    project_root: Optional[Path] = None,
 ) -> Tuple[SessionTokenSummary, Dict[str, TokenConsumer]]:
     """Token summary of one Claude session: main transcript plus its subagent transcripts.
 
@@ -652,9 +1102,9 @@ def _parse_claude_tokens(
     replayed by a resumed session is counted once (same rule as ccusage).
     """
     counted = set() if counted is None else counted
-    main_state = _update_claude_token_file(jpath)
+    main_state = _update_claude_token_file(jpath, project_root=project_root)
     turns: Dict[str, Dict[str, Any]] = {}
-    for state in [main_state] + [_update_claude_token_file(p) for p in subagent_paths]:
+    for state in [main_state] + [_update_claude_token_file(p, project_root=project_root) for p in subagent_paths]:
         for key, turn in state["turns"].items():
             if key not in counted:
                 counted.add(key)
@@ -672,11 +1122,31 @@ def _parse_claude_tokens(
 def _parse_antigravity_tokens(transcript: Path, session_id: str, title: str) -> Tuple[SessionTokenSummary, Dict[str, TokenConsumer]]:
     state, new_objs = _read_new_jsonl_lines(transcript, "antigravity")
     turns: Dict[str, Dict[str, Any]] = state["turns"]
+    subagents: List[str] = state.setdefault("subagents", [])
+    workflows: List[str] = state.setdefault("workflows", [])
     for idx, obj in enumerate(new_objs):
         if "title" not in state and obj.get("type") == "USER_INPUT" and isinstance(obj.get("content"), str):
             first = next((ln.strip() for ln in obj["content"].splitlines() if ln.strip() and not ln.strip().startswith("<")), "")
             if first:
                 state["title"] = first[:44]
+        elif "title" not in state and obj.get("type") == "SYSTEM_MESSAGE" and isinstance(obj.get("content"), str):
+            m_sys = _AGY_SYS_MSG_RE.search(obj["content"])
+            if m_sys and "/" not in m_sys.group(1):
+                body_first = next((ln.strip() for ln in m_sys.group(2).splitlines() if ln.strip() and not ln.strip().startswith("<")), "")
+                if body_first:
+                    state["title"] = f"↳ {body_first[:40]}"
+        for tc in (obj.get("tool_calls") or []):
+            if not isinstance(tc, dict):
+                continue
+            _, sub = _summarize_agy_tool_call(tc)
+            if sub and sub not in subagents:
+                subagents.append(sub)
+            if tc.get("name") == "run_workflow":
+                wargs = _extract_agy_tc_args(tc)
+                wdesc = str(wargs.get("Description") or wargs.get("ScriptPath") or "workflow").strip()
+                wlbl = f"run_workflow: {wdesc}"
+                if wlbl not in workflows:
+                    workflows.append(wlbl)
         in_t = obj.get("input_tokens")
         out_t = obj.get("output_tokens")
         cache_t = obj.get("cache_read_tokens")
@@ -856,6 +1326,36 @@ def _merge_token_summaries(
     )
 
 
+def _collect_claude_team_members(claude_home: Path) -> Dict[str, List[str]]:
+    teams_dir = claude_home / "teams"
+    if not teams_dir.is_dir():
+        return {}
+    by_session: Dict[str, List[str]] = {}
+    for cfg in sorted(teams_dir.glob("*/config.json")):
+        try:
+            data = json.loads(cfg.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        lead_sid = str(data.get("leadSessionId") or "").strip()
+        if not lead_sid and cfg.parent.name.startswith("session-"):
+            lead_sid = cfg.parent.name[len("session-"):]
+        if not lead_sid:
+            continue
+        members: List[str] = []
+        for m in data.get("members") or []:
+            if isinstance(m, dict) and m.get("name"):
+                mname = str(m["name"]).strip()
+                mtype = str(m.get("agentType") or "").strip()
+                label = f"{mname} ({mtype})" if mtype and mtype != mname else mname
+                if label not in members:
+                    members.append(label)
+        if members:
+            by_session.setdefault(lead_sid, []).extend(members)
+    return by_session
+
+
 def _collect_claude_sessions(
     project_root: Path,
     claude_home: Path,
@@ -864,6 +1364,7 @@ def _collect_claude_sessions(
     norm_root = _normalize_path_str(str(project_root))
     proj_dir = _find_claude_project_dir(project_root, claude_home)
     sessions_by_id: Dict[str, AgentSessionInfo] = {}
+    team_members = _collect_claude_team_members(claude_home)
 
     sessions_dir = claude_home / "sessions"
     if sessions_dir.is_dir():
@@ -893,6 +1394,8 @@ def _collect_claude_sessions(
                 meta=f"pid:{data.get('pid', '?')}",
             )
 
+    inline_by_sid: Dict[str, List[AgentTaskInfo]] = {}
+
     # Fallback/enrichment from ~/.claude/projects/<slug>/*.jsonl
     if proj_dir and proj_dir.is_dir():
         # Oldest first, so a replayed API call is owned by the session where it happened.
@@ -901,8 +1404,10 @@ def _collect_claude_sessions(
             counted: set = set()
             for jpath in all_jsonl:
                 subs = sorted((proj_dir / jpath.stem / "subagents").glob("*.jsonl"))
-                token_acc.append(_parse_claude_tokens(jpath, jpath.stem, jpath.stem[:12], subs, counted))
-        for jpath in all_jsonl[::-1][:5]:
+                token_acc.append(
+                    _parse_claude_tokens(jpath, jpath.stem, jpath.stem[:12], subs, counted, project_root=project_root)
+                )
+        for jpath in all_jsonl[::-1][:_MAX_LISTED_SESSIONS]:
             sid = jpath.stem
             sess = sessions_by_id.get(sid)
             if sess is None:
@@ -915,40 +1420,101 @@ def _collect_claude_sessions(
                     updated_at=jpath.stat().st_mtime,
                 )
                 sessions_by_id[sid] = sess
-            title, tools, subagents, activities, meta = _parse_claude_jsonl(jpath, sess.title)
-            sess.title = title
-            sess.recent_tools = tools
-            sess.subagents = subagents
-            sess.activities = activities
+            parsed = _parse_claude_jsonl(jpath, sess.title, project_root=project_root)
+            tok_state = _TOKEN_FILE_CACHE.get(f"claude:{jpath}") or {}
+            sess.title = parsed["title"] or tok_state.get("title") or sess.title
+            sess.recent_tools = list(parsed["tools"])
+            sub_merged = list(tok_state.get("subagents", []))
+            for sb in parsed["subagents"]:
+                if sb not in sub_merged:
+                    sub_merged.append(sb)
+            sess.subagents = sub_merged[-16:]
+            wf_merged = list(tok_state.get("workflows", []))
+            for w in parsed["workflows"]:
+                if w not in wf_merged:
+                    wf_merged.append(w)
+            sess.workflows = wf_merged[-12:]
+            tf_merged = list(tok_state.get("touched_files", []))
+            for tf in parsed["touched_files"]:
+                if tf not in tf_merged:
+                    tf_merged.append(tf)
+            sess.touched_files = tf_merged[-25:]
+            sess.activities = list(parsed["activities"])
+            sess.pending_reason = str(parsed["pending_reason"] or "")
+            sess.voice_active = bool(parsed["voice_active"])
+            sess.last_assistant_text = str(parsed["last_assistant_text"] or "")
+            inline_by_sid[sid] = list(parsed["inline_tasks"])
+            meta = str(parsed["meta"] or "")
             if meta:
                 sess.meta = f"{sess.meta} · {meta}" if sess.meta else meta
             sess.updated_at = max(sess.updated_at, jpath.stat().st_mtime)
+            if sess.pending_reason and (time.time() - sess.updated_at) <= _STALE_PENDING_SECONDS:
+                sess.status = "pending"
+            else:
+                sess.pending_reason = ""
 
     for sid, sess in sessions_by_id.items():
-        sess.tasks = _collect_claude_tasks(sid, claude_home)
+        sess.tasks = _collect_claude_tasks(
+            sid,
+            claude_home,
+            proj_dir=proj_dir,
+            inline_tasks=inline_by_sid.get(sid, ()),
+        )
+        for tk in sess.tasks:
+            if tk.kind == "subagent" and tk.title not in sess.subagents:
+                sess.subagents.append(tk.title)
+        for member in team_members.get(sid, ()):
+            if member not in sess.subagents:
+                sess.subagents.append(member)
+        for prefix, mlist in team_members.items():
+            if sid != prefix and sid.startswith(prefix):
+                for member in mlist:
+                    if member not in sess.subagents:
+                        sess.subagents.append(member)
+        if not sess.pending_reason and any(t.status in ("running", "in_progress") for t in sess.tasks):
+            if sess.status in ("recent", "idle"):
+                sess.status = "running"
 
     return sorted(sessions_by_id.values(), key=lambda s: s.updated_at, reverse=True)
 
 
-def _antigravity_workspace_conversations(antigravity_home: Path, project_root: Path) -> Optional[set]:
-    """Conversation ids whose workspace (per Antigravity's own index) is this project or a subfolder.
-
-    Returns None when the index is missing/unreadable so callers can fall back to the heuristic.
-    """
+def _antigravity_workspace_conversations(
+    antigravity_home: Path,
+    project_root: Path,
+) -> Tuple[Optional[set], Dict[str, Tuple[str, str]]]:
+    """Return `(matching_conv_ids_or_None, {conv_id: (summary_title, app_data_dir)})` from Antigravity's index."""
     db_path = antigravity_home / "conversation_summaries.db"
     if not db_path.is_file():
-        return None
+        return None, {}
     try:
         con = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True, timeout=1.0)
         try:
-            rows = con.execute("SELECT conversation_id, workspace_uris FROM conversation_summaries").fetchall()
+            cols = {c[1] for c in con.execute("PRAGMA table_info(conversation_summaries)").fetchall()}
+            has_title = "title" in cols
+            has_app_dir = "app_data_dir" in cols
+            sel = "conversation_id, workspace_uris"
+            if has_title:
+                sel += ", title"
+            if has_app_dir:
+                sel += ", app_data_dir"
+            rows = con.execute(f"SELECT {sel} FROM conversation_summaries").fetchall()
         finally:
             con.close()
     except sqlite3.Error:
-        return None
+        return None, {}
     root = _normalize_path_str(str(project_root))
     ids = set()
-    for conv_id, uris_json in rows:
+    meta_map: Dict[str, Tuple[str, str]] = {}
+    for row in rows:
+        conv_id = str(row[0] or "")
+        uris_json = row[1]
+        pos = 2
+        stitle = str(row[pos] or "").strip() if has_title else ""
+        if has_title:
+            pos += 1
+        app_dir = str(row[pos] or "").strip() if has_app_dir else ""
+        if conv_id and (stitle or app_dir):
+            meta_map[conv_id] = (stitle, app_dir)
         try:
             uris = json.loads(uris_json or "[]")
         except ValueError:
@@ -958,9 +1524,9 @@ def _antigravity_workspace_conversations(antigravity_home: Path, project_root: P
                 continue
             ws = _normalize_path_str(url2pathname(unquote(urlparse(uri).path)))
             if ws == root or ws.startswith(root + "/"):
-                ids.add(str(conv_id))
+                ids.add(conv_id)
                 break
-    return ids
+    return ids, meta_map
 
 
 def _antigravity_matches_project(conv_dir: Path, project_root: Path, seen_ids: set) -> bool:
@@ -983,20 +1549,63 @@ def _antigravity_matches_project(conv_dir: Path, project_root: Path, seen_ids: s
     return any(c in tail_text for c in candidates)
 
 
+def _extract_agy_tc_args(tc: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract and decode tool call arguments from Antigravity transcript (`arguments` or `args`)."""
+    raw = tc.get("arguments")
+    if not isinstance(raw, dict):
+        raw = tc.get("args")
+    if not isinstance(raw, dict):
+        return {}
+    out: Dict[str, Any] = {}
+    for k, v in raw.items():
+        if isinstance(v, str) and len(v) >= 2 and v[0] in ('"', "[", "{"):
+            try:
+                out[k] = json.loads(v)
+                continue
+            except ValueError:
+                pass
+        out[k] = v
+    return out
+
+
 def _summarize_agy_tool_call(tc: Dict[str, Any]) -> Tuple[str, Optional[str]]:
     name = str(tc.get("name") or "tool")
-    args = tc.get("arguments")
-    if not isinstance(args, dict):
+    args = _extract_agy_tc_args(tc)
+    if not args:
         return name, None
     if name == "invoke_subagent":
-        role = str(args.get("Role") or args.get("TypeName") or "subagent").strip()
+        role = str(args.get("Role") or args.get("Name") or args.get("TypeName") or "subagent").strip()
         return f"subagent: {role}", role
-    for key in ("Path", "CommandLine", "toolSummary", "query"):
+    if name == "define_subagent":
+        role = str(args.get("Name") or args.get("Role") or "subagent").strip()
+        return f"define_subagent: {role}", None
+    if name == "send_message":
+        rec = str(args.get("Recipient") or "agent").strip()[:12]
+        msg = str(args.get("Message") or "").strip().splitlines()[0][:48] if args.get("Message") else ""
+        return (f"send_message -> {rec}: {msg}" if msg else f"send_message -> {rec}"), None
+    if name == "swarm":
+        act = str(args.get("action") or "swarm").strip()
+        wname = str(args.get("name") or "").strip()
+        label = f"swarm:{act}" + (f" ({wname})" if wname else "")
+        return label, wname or label
+    if name == "run_workflow":
+        desc = str(args.get("Description") or args.get("ScriptPath") or "workflow").strip()
+        return f"run_workflow: {desc[:48]}", None
+    for key in ("Path", "TargetFile", "CommandLine", "toolSummary", "query", "Prompt"):
         val = args.get(key)
         if isinstance(val, str) and val.strip():
-            short = Path(val).name if key == "Path" else val.strip()[:48]
+            short = Path(val).name if key in ("Path", "TargetFile") else val.strip()[:48]
             return f"{name}: {short}", None
     return name, None
+
+
+_LOG_CREATED_AT_RE = re.compile(r"Created At:\s*(\S+)")
+_LOG_COMPLETED_AT_RE = re.compile(r"Completed At:\s*(\S+)")
+_AGY_SYS_MSG_RE = re.compile(
+    r"\[Message\]\s+timestamp=\S+\s+sender=([^\s]+)\s+priority=\S+\s+content=(.+)",
+    re.DOTALL,
+)
+_STALE_PENDING_SECONDS = 14400.0  # 4h: older unanswered questions are abandoned, not active pending
 
 
 def _collect_antigravity_tasks(conv_dir: Path, now_ts: float) -> List[AgentTaskInfo]:
@@ -1005,8 +1614,26 @@ def _collect_antigravity_tasks(conv_dir: Path, now_ts: float) -> List[AgentTaskI
         return []
     tasks: List[AgentTaskInfo] = []
     for log_path in sorted(tasks_dir.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True):
-        mtime = log_path.stat().st_mtime
-        tail = _read_tail_lines(log_path, max_bytes=32_768, max_lines=_MAX_TASK_TAIL_LINES)
+        try:
+            st = log_path.stat()
+        except OSError:
+            continue
+        mtime = st.st_mtime
+        ctime = min(st.st_ctime, mtime)
+        tail = _cached_by_stat(
+            "agy_task_log",
+            log_path,
+            lambda p=log_path: _read_tail_lines(p, max_bytes=32_768, max_lines=_MAX_TASK_TAIL_LINES),
+        )
+        started_at = ctime
+        updated_at = mtime
+        for ln in tail[:6]:
+            m_c = _LOG_CREATED_AT_RE.search(ln)
+            if m_c:
+                started_at = _parse_timestamp(m_c.group(1), fallback=started_at)
+            m_f = _LOG_COMPLETED_AT_RE.search(ln)
+            if m_f:
+                updated_at = _parse_timestamp(m_f.group(1), fallback=updated_at)
         status = "running" if (now_ts - mtime) < _ACTIVE_TASK_WINDOW_SECONDS else "finished"
         tasks.append(
             AgentTaskInfo(
@@ -1016,11 +1643,173 @@ def _collect_antigravity_tasks(conv_dir: Path, now_ts: float) -> List[AgentTaskI
                 title=log_path.name,
                 session_id=conv_dir.name,
                 log_path=log_path,
-                updated_at=mtime,
+                started_at=started_at,
+                updated_at=max(started_at, updated_at),
                 tail_lines=tail,
+                kind="task",
             )
         )
     return tasks
+
+
+def _parse_antigravity_transcript(transcript: Path, conv_id: str, project_root: Path) -> Dict[str, Any]:
+    def _build() -> Dict[str, Any]:
+        tools: List[str] = []
+        subagents: List[str] = []
+        workflows: List[str] = []
+        touched_files: List[str] = []
+        inline_tasks: List[AgentTaskInfo] = []
+        activities: List[AgentActivityItem] = []
+        title = conv_id[:12]
+        last_step_status = ""
+        pending_reason = ""
+        last_assistant_text = ""
+
+        try:
+            fallback_ts = transcript.stat().st_mtime
+        except OSError:
+            fallback_ts = time.time()
+
+        for line in _read_tail_lines(transcript):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            step_idx = obj.get("step_index")
+            step_type = str(obj.get("type") or "")
+            step_status = str(obj.get("status") or "")
+            created_at = str(obj.get("created_at") or "")
+            step_ts = _parse_timestamp(created_at, fallback=fallback_ts)
+            ts_hms = created_at[11:19] if len(created_at) >= 19 else "--:--:--"
+
+            if step_type == "USER_INPUT":
+                pending_reason = ""
+                if isinstance(obj.get("content"), str):
+                    lines_clean = [
+                        ln.strip()
+                        for ln in obj["content"].splitlines()
+                        if ln.strip() and not ln.strip().startswith("<")
+                    ]
+                    if lines_clean:
+                        title = lines_clean[0][:44]
+            elif step_type == "SYSTEM_MESSAGE" and isinstance(obj.get("content"), str):
+                m_sys = _AGY_SYS_MSG_RE.search(obj["content"])
+                if m_sys:
+                    sender_id = m_sys.group(1).strip()
+                    body_lines = [
+                        ln.strip()
+                        for ln in m_sys.group(2).splitlines()
+                        if ln.strip() and not ln.strip().startswith("<")
+                    ]
+                    first_body = body_lines[0] if body_lines else ""
+                    if "/" not in sender_id:
+                        if step_idx == 0 and title == conv_id[:12] and first_body:
+                            title = f"↳ {first_body[:40]}"
+                        elif first_body:
+                            activities.append(
+                                AgentActivityItem(
+                                    timestamp=ts_hms,
+                                    agent="antigravity",
+                                    kind="message",
+                                    summary=f"recv_message <- {sender_id[:8]}: {first_body[:48]}",
+                                )
+                            )
+
+            if step_status:
+                last_step_status = step_status
+
+            if step_type == "PLANNER_RESPONSE" and isinstance(obj.get("content"), str) and obj["content"].strip():
+                last_assistant_text = obj["content"].strip()
+
+            tcs = obj.get("tool_calls") or []
+            if step_type == "PLANNER_RESPONSE" and tcs:
+                # Reset previous step pending unless a new pending tool call appears in this step
+                pending_reason = ""
+            for tc_idx, tc in enumerate(tcs):
+                if not isinstance(tc, dict):
+                    continue
+                tname = str(tc.get("name") or "")
+                args = _extract_agy_tc_args(tc)
+                if tname and tname not in tools:
+                    tools.append(tname)
+                summary, subagent = _summarize_agy_tool_call(tc)
+                if subagent and subagent not in subagents:
+                    subagents.append(subagent)
+                activities.append(
+                    AgentActivityItem(timestamp=ts_hms, agent="antigravity", kind="tool", summary=summary)
+                )
+
+                tid = f"step-{step_idx}-{tc_idx}" if step_idx is not None else f"tc-{len(inline_tasks)}"
+                if tname == "run_workflow":
+                    spath = str(args.get("ScriptPath") or "").strip()
+                    desc = str(args.get("Description") or (Path(spath).name if spath else "workflow")).strip()
+                    wlabel = f"run_workflow: {desc}"
+                    if spath and Path(spath).name not in wlabel:
+                        wlabel = f"{wlabel} ({Path(spath).name})"
+                    if wlabel not in workflows:
+                        workflows.append(wlabel)
+                    inline_tasks.append(
+                        AgentTaskInfo(
+                            id=tid,
+                            agent="antigravity",
+                            status="finished",
+                            title=wlabel,
+                            session_id=conv_id,
+                            log_path=transcript,
+                            started_at=step_ts,
+                            updated_at=step_ts,
+                            tail_lines=[wlabel],
+                            kind="workflow",
+                        )
+                    )
+                elif tname == "schedule":
+                    sprompt = str(args.get("Prompt") or "timer").strip()[:40]
+                    inline_tasks.append(
+                        AgentTaskInfo(
+                            id=tid,
+                            agent="antigravity",
+                            status="running",
+                            title=f"schedule: {sprompt}",
+                            session_id=conv_id,
+                            log_path=transcript,
+                            started_at=step_ts,
+                            updated_at=step_ts,
+                            tail_lines=[f"[schedule] {sprompt}"],
+                            kind="cron",
+                        )
+                    )
+                elif tname in ("write_file", "edit_file", "replace_file_content", "multi_replace_file_content", "write_to_file"):
+                    raw_p = str(args.get("Path") or args.get("TargetFile") or "").strip()
+                    if raw_p:
+                        rel_p = _relativize_project_path(raw_p, project_root)
+                        if rel_p and rel_p not in touched_files:
+                            touched_files.append(rel_p)
+                    art_meta = args.get("ArtifactMetadata")
+                    if isinstance(art_meta, dict) and art_meta.get("RequestFeedback"):
+                        pending_reason = f"Feedback requerido: {Path(raw_p).name if raw_p else 'artefacto'}"
+                elif tname == "ask_question":
+                    q_txt = _extract_first_question(args.get("questions"))
+                    pending_reason = f"Pregunta: {q_txt}" if q_txt else "Pregunta al usuario"
+
+        return {
+            "title": title,
+            "tools": tools[-12:],
+            "subagents": subagents[-12:],
+            "workflows": workflows[-12:],
+            "touched_files": touched_files[-25:],
+            "inline_tasks": inline_tasks[-15:],
+            "activities": activities[-20:],
+            "last_step_status": last_step_status,
+            "pending_reason": pending_reason,
+            "last_assistant_text": last_assistant_text,
+        }
+
+    return _cached_by_stat("agy_transcript", transcript, _build)
 
 
 def _collect_antigravity_sessions(
@@ -1031,85 +1820,134 @@ def _collect_antigravity_sessions(
     seen_file = project_root / AOS_DIR_NAME / "native" / "antigravity-seen.txt"
     seen_ids = set(seen_file.read_text(encoding="utf-8", errors="replace").split()) if seen_file.is_file() else set()
 
-    brain_dir = antigravity_home / "brain"
-    if not brain_dir.is_dir():
-        return []
+    # Scan primary `antigravity/` (Antigravity 2.0 / IDE) and sibling `antigravity-cli/` (`agy` CLI)
+    homes: List[Path] = [antigravity_home]
+    cli_home: Optional[Path] = None
+    if antigravity_home.name == "antigravity":
+        candidate_cli = antigravity_home.parent / "antigravity-cli"
+        if candidate_cli.is_dir():
+            cli_home = candidate_cli
+            homes.append(candidate_cli)
 
     now_ts = time.time()
-    workspace_ids = _antigravity_workspace_conversations(antigravity_home, project_root)
+    workspace_ids_union: Optional[set] = None
+    summary_meta: Dict[str, Tuple[str, str]] = {}
+    for h in homes:
+        ws_ids, h_meta = _antigravity_workspace_conversations(h, project_root)
+        if ws_ids is not None:
+            workspace_ids_union = ws_ids if workspace_ids_union is None else (workspace_ids_union | ws_ids)
+        for cid, (stitle, app_dir) in h_meta.items():
+            prev_t, prev_d = summary_meta.get(cid, ("", ""))
+            summary_meta[cid] = (stitle or prev_t, prev_d or app_dir)
+
+    conv_dirs_by_id: Dict[str, Tuple[Path, str]] = {}
     try:
-        if workspace_ids is not None:
-            matched = [brain_dir / cid for cid in workspace_ids if (brain_dir / cid).is_dir()]
-        else:
-            recent = sorted((p for p in brain_dir.iterdir() if p.is_dir()), key=lambda p: p.stat().st_mtime, reverse=True)
-            matched = [p for p in recent[:_MAX_LISTED_SESSIONS] if _antigravity_matches_project(p, project_root, seen_ids)]
-        matched.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        for h in homes:
+            bdir = h / "brain"
+            if not bdir.is_dir():
+                continue
+            default_tag = "agy-cli" if h == cli_home else "agy-ide"
+            if workspace_ids_union is not None:
+                cands = [bdir / cid for cid in workspace_ids_union if (bdir / cid).is_dir()]
+            else:
+                recent = sorted((p for p in bdir.iterdir() if p.is_dir()), key=lambda p: p.stat().st_mtime, reverse=True)
+                cands = [p for p in recent[:_MAX_LISTED_SESSIONS] if _antigravity_matches_project(p, project_root, seen_ids)]
+            for cdir in cands:
+                # Track actual DB presence first so we know accurately whether `agy --conversation` can load directly
+                cid = cdir.name
+                if cli_home is not None and (cli_home / "conversations" / f"{cid}.db").is_file():
+                    tag = "agy-cli"
+                elif (antigravity_home / "conversations" / f"{cid}.db").is_file():
+                    tag = "agy-ide"
+                else:
+                    tag = default_tag
+                prev = conv_dirs_by_id.get(cid)
+                if prev is None:
+                    conv_dirs_by_id[cid] = (cdir, tag)
+                else:
+                    try:
+                        prev_has = (prev[0] / ".system_generated" / "logs" / "transcript.jsonl").is_file()
+                        curr_has = (cdir / ".system_generated" / "logs" / "transcript.jsonl").is_file()
+                        if (curr_has and not prev_has) or (curr_has == prev_has and cdir.stat().st_mtime > prev[0].stat().st_mtime):
+                            conv_dirs_by_id[cid] = (cdir, tag)
+                    except OSError:
+                        pass
+
+        matched_pairs = sorted(conv_dirs_by_id.values(), key=lambda pair: pair[0].stat().st_mtime, reverse=True)
     except OSError:
         return []
 
+    if not matched_pairs:
+        return []
+
     if token_acc is not None:
-        for conv_dir in matched:
+        for conv_dir, _ in matched_pairs:
             transcript = conv_dir / ".system_generated" / "logs" / "transcript.jsonl"
             if transcript.is_file():
                 token_acc.append(_parse_antigravity_tokens(transcript, conv_dir.name, conv_dir.name[:12]))
 
     sessions: List[AgentSessionInfo] = []
-    for conv_dir in matched[:_MAX_LISTED_SESSIONS]:
+    for conv_dir, src_tag in matched_pairs[:_MAX_LISTED_SESSIONS]:
         transcript = conv_dir / ".system_generated" / "logs" / "transcript.jsonl"
         tools: List[str] = []
         subagents: List[str] = []
+        workflows: List[str] = []
+        touched_files: List[str] = []
+        inline_tasks: List[AgentTaskInfo] = []
         activities: List[AgentActivityItem] = []
         title = conv_dir.name[:12]
+        sum_title, app_dir = summary_meta.get(conv_dir.name, ("", ""))
         last_status = "idle"
+        pending_reason = ""
+        last_assistant_text = ""
         latest_mtime = conv_dir.stat().st_mtime
 
         if transcript.is_file():
             latest_mtime = max(latest_mtime, transcript.stat().st_mtime)
-            for line in _read_tail_lines(transcript):
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except ValueError:
-                    continue
-                if not isinstance(obj, dict):
-                    continue
-                step_type = str(obj.get("type") or "")
-                step_status = str(obj.get("status") or "")
-                created_at = str(obj.get("created_at") or "")
-                ts_hms = created_at[11:19] if len(created_at) >= 19 else "--:--:--"
-
-                if step_type == "USER_INPUT" and isinstance(obj.get("content"), str):
-                    lines_clean = [
-                        ln.strip()
-                        for ln in obj["content"].splitlines()
-                        if ln.strip() and not ln.strip().startswith("<")
-                    ]
-                    if lines_clean:
-                        title = lines_clean[0][:44]
-
+            parsed = _parse_antigravity_transcript(transcript, conv_dir.name, project_root)
+            tok_state = _TOKEN_FILE_CACHE.get(f"antigravity:{transcript}") or {}
+            title = parsed["title"]
+            if title == conv_dir.name[:12] and tok_state.get("title"):
+                title = str(tok_state["title"])
+            if title == conv_dir.name[:12] and sum_title:
+                title = sum_title[:44]
+            tools = list(parsed["tools"])
+            sub_merged = list(tok_state.get("subagents", []))
+            for sb in parsed["subagents"]:
+                if sb not in sub_merged:
+                    sub_merged.append(sb)
+            subagents = sub_merged[-16:]
+            wf_merged = list(tok_state.get("workflows", []))
+            for wf in parsed["workflows"]:
+                if wf not in wf_merged:
+                    wf_merged.append(wf)
+            workflows = wf_merged[-12:]
+            touched_files = list(parsed["touched_files"])
+            inline_tasks = list(parsed["inline_tasks"])
+            activities = list(parsed["activities"])
+            pending_reason = str(parsed["pending_reason"] or "")
+            last_assistant_text = str(parsed["last_assistant_text"] or "")
+            step_status = str(parsed["last_step_status"] or "")
+            if pending_reason and (now_ts - latest_mtime) <= _STALE_PENDING_SECONDS:
+                last_status = "pending"
+            else:
+                pending_reason = ""
                 if step_status and step_status != "DONE":
                     last_status = "running"
                 elif step_status == "DONE":
                     last_status = "active" if (now_ts - latest_mtime) < 60 else "idle"
 
-                for tc in obj.get("tool_calls") or []:
-                    if not isinstance(tc, dict):
-                        continue
-                    tname = str(tc.get("name") or "")
-                    if tname and tname not in tools:
-                        tools.append(tname)
-                    summary, subagent = _summarize_agy_tool_call(tc)
-                    if subagent and subagent not in subagents:
-                        subagents.append(subagent)
-                    activities.append(
-                        AgentActivityItem(timestamp=ts_hms, agent="antigravity", kind="tool", summary=summary)
-                    )
-
-        tasks = _collect_antigravity_tasks(conv_dir, now_ts)
-        if any(t.status == "running" for t in tasks):
+        log_tasks = _collect_antigravity_tasks(conv_dir, now_ts)
+        tasks = sorted(log_tasks + inline_tasks, key=lambda t: t.updated_at, reverse=True)
+        if not pending_reason and any(t.status == "running" for t in log_tasks):
             last_status = "running"
+
+        if src_tag != "agy-cli" and app_dir == "antigravity-cli" and cli_home is not None and (cli_home / "conversations" / f"{conv_dir.name}.db").is_file():
+            src_tag = "agy-cli"
+
+        # Skip empty transient CLI import stubs without transcript, tasks, or summary title
+        if src_tag == "agy-cli" and not transcript.is_file() and not tasks and not sum_title:
+            continue
 
         sessions.append(
             AgentSessionInfo(
@@ -1123,7 +1961,12 @@ def _collect_antigravity_sessions(
                 recent_tools=tools[-12:],
                 tasks=tasks,
                 activities=activities[-20:],
-                meta=f"{len(tasks)} task(s)",
+                meta=f"{len(tasks)} task(s) · {src_tag}",
+                pending_reason=pending_reason,
+                workflows=workflows[-12:],
+                touched_files=touched_files[-25:],
+                last_assistant_text=last_assistant_text,
+                summary_title=sum_title,
             )
         )
 
@@ -1290,5 +2133,17 @@ def diff_snapshots(prev: Optional[TelemetrySnapshot], curr: TelemetrySnapshot) -
         elif len(sess.activities) > len(old_s.activities) and sess.activities:
             latest = sess.activities[-1]
             events.append(LiveEvent(timestamp=ts, level="info", source=sess.tool, message=latest.summary))
+        if sess.status == "pending" and (
+            old_s is None or old_s.status != "pending" or old_s.pending_reason != sess.pending_reason
+        ):
+            reason = sess.pending_reason or "Esperando acción del usuario"
+            events.append(
+                LiveEvent(
+                    timestamp=ts,
+                    level="warn",
+                    source=sess.tool,
+                    message=f"PENDING ({sess.title}): {reason}",
+                )
+            )
 
     return events

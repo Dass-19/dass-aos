@@ -485,3 +485,345 @@ class TestTelemetry(unittest.TestCase):
         self.assertEqual(by_id["sess-b"].input_tokens, 57)  # r2 + subagent r3, not r1 again
         self.assertEqual(tok.input_tokens, 100 + 57 + 1000)
         self.assertEqual(tok.output_tokens, 10 + 6 + 100)
+
+    def test_incremental_cache_skips_unchanged_plans_sessions_and_tasks(self):
+        from dass_aos.telemetry import _encode_claude_cwd, collect_telemetry
+
+        plan_file = self.project_root / ".aos" / "plans" / "active" / "001-cache.md"
+        plan_file.write_text("# Plan Cache\n\n- [ ] Fase 1: Cache\n", encoding="utf-8")
+
+        proj_dir = self.claude_home / "projects" / _encode_claude_cwd(self.project_root)
+        proj_dir.mkdir(parents=True)
+        jpath = proj_dir / "sess-cache.jsonl"
+        jpath.write_text(
+            json.dumps({"type": "ai-title", "aiTitle": "Cached Session", "sessionId": "sess-cache"}) + "\n",
+            encoding="utf-8",
+        )
+
+        snap1 = collect_telemetry(self.project_root, claude_home=self.claude_home, antigravity_home=self.agy_home)
+        self.assertEqual(snap1.active_plans[0].title, "Plan Cache")
+
+        # Second call with identical mtime_ns and size must reuse cached plan & session parse without reading tail lines
+        with mock.patch("dass_aos.telemetry._read_tail_lines", side_effect=AssertionError("should use stat cache")):
+            snap2 = collect_telemetry(
+                self.project_root,
+                claude_home=self.claude_home,
+                antigravity_home=self.agy_home,
+                prev_snapshot=snap1,
+                include_slow=False,
+            )
+        self.assertEqual(snap2.active_plans[0].title, "Plan Cache")
+        self.assertEqual(snap2.sessions[0].title, "Cached Session")
+
+        # Updating only subagent .meta.json (finished: False -> True) while .jsonl is unchanged must invalidate cache
+        sub_dir = proj_dir / "sess-cache" / "subagents"
+        sub_dir.mkdir(parents=True)
+        meta_p = sub_dir / "agent-sub1.meta.json"
+        jsonl_p = sub_dir / "agent-sub1.jsonl"
+        meta_p.write_text(json.dumps({"agentType": "reviewer", "description": "Check", "finished": False}), encoding="utf-8")
+        jsonl_p.write_text(json.dumps({"type": "user", "timestamp": "2026-11-18T10:00:00Z"}) + "\n", encoding="utf-8")
+
+        snap3 = collect_telemetry(self.project_root, claude_home=self.claude_home, antigravity_home=self.agy_home)
+        self.assertEqual(snap3.tasks[0].status, "running")
+
+        meta_p.write_text(json.dumps({"agentType": "reviewer", "description": "Check", "finished": True}), encoding="utf-8")
+        snap4 = collect_telemetry(self.project_root, claude_home=self.claude_home, antigravity_home=self.agy_home)
+        self.assertEqual(snap4.tasks[0].status, "finished")
+
+    def test_maps_workflows_subagents_tasks_datetimes_and_touched_files_for_both_agents(self):
+        from dass_aos.telemetry import _encode_claude_cwd, collect_telemetry
+
+        # 1. Claude Code session with subagents (.meta.json + .jsonl), tool-results, Workflow, Skill, teams, file-history-delta
+        proj_dir = self.claude_home / "projects" / _encode_claude_cwd(self.project_root)
+        sub_dir = proj_dir / "sess-wf" / "subagents"
+        tr_dir = proj_dir / "sess-wf" / "tool-results"
+        sub_dir.mkdir(parents=True)
+        tr_dir.mkdir(parents=True)
+
+        (sub_dir / "agent-a111.meta.json").write_text(
+            json.dumps({
+                "agentType": "reviewer",
+                "description": "Lens review: security",
+                "toolUseId": "toolu_sub1",
+                "spawnDepth": 1,
+                "requestShape": "background",
+                "finished": False,
+            }),
+            encoding="utf-8",
+        )
+        (sub_dir / "agent-a111.jsonl").write_text(
+            "\n".join([
+                json.dumps({"type": "user", "timestamp": "2026-11-18T10:00:00Z", "message": {"content": "Audit"}}),
+                json.dumps({
+                    "type": "assistant",
+                    "timestamp": "2026-11-18T10:02:30Z",
+                    "message": {"content": [{"type": "text", "text": "Revisando permisos..."}]},
+                }),
+            ]) + "\n",
+            encoding="utf-8",
+        )
+        (tr_dir / "b999.txt").write_text("pytest output line 1\n5 passed\n", encoding="utf-8")
+
+        team_dir = self.claude_home / "teams" / "session-sess-wf"
+        team_dir.mkdir(parents=True)
+        (team_dir / "config.json").write_text(
+            json.dumps({
+                "name": "session-sess-wf",
+                "leadSessionId": "sess-wf",
+                "members": [
+                    {"name": "team-lead", "agentType": "team-lead"},
+                    {"name": "qa-worker", "agentType": "qa-tester"},
+                ],
+            }),
+            encoding="utf-8",
+        )
+
+        (proj_dir / "sess-wf.jsonl").write_text(
+            "\n".join([
+                json.dumps({"type": "ai-title", "aiTitle": "Workflow Session", "sessionId": "sess-wf"}),
+                json.dumps({
+                    "type": "file-history-delta",
+                    "trackingPath": str(self.project_root / "dass_aos" / "telemetry.py"),
+                    "timestamp": "2026-11-18T10:01:00Z",
+                }),
+                json.dumps({
+                    "type": "assistant",
+                    "timestamp": "2026-11-18T10:01:10Z",
+                    "message": {
+                        "stop_reason": "tool_use",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "tu-wf",
+                                "name": "Workflow",
+                                "input": {"scriptPath": str(self.project_root / ".claude" / "workflows" / "coordinar.js")},
+                            },
+                            {
+                                "type": "tool_use",
+                                "id": "tu-sk",
+                                "name": "Skill",
+                                "input": {"skill": "phased-delivery", "args": "Fase 2"},
+                            },
+                            {
+                                "type": "tool_use",
+                                "id": "tu-bg",
+                                "name": "Bash",
+                                "input": {"command": "python -m unittest", "run_in_background": True},
+                            },
+                            {
+                                "type": "tool_use",
+                                "id": "tu-ed",
+                                "name": "Edit",
+                                "input": {"file_path": str(self.project_root / "dass_aos" / "tui" / "app.py")},
+                            },
+                        ],
+                    },
+                }),
+                json.dumps({
+                    "type": "user",
+                    "timestamp": "2026-11-18T10:01:20Z",
+                    "message": {
+                        "content": [
+                            {"type": "tool_result", "tool_use_id": "tu-wf", "content": "ok"},
+                            {"type": "tool_result", "tool_use_id": "tu-sk", "content": "ok"},
+                            {"type": "tool_result", "tool_use_id": "tu-bg", "content": "ok"},
+                            {"type": "tool_result", "tool_use_id": "tu-ed", "content": "ok"},
+                        ]
+                    },
+                }),
+            ]) + "\n",
+            encoding="utf-8",
+        )
+
+        # 2. Antigravity session with run_workflow, invoke_subagent, schedule, edit_file, and background task log
+        conv_id = "conv-wf"
+        seen_file = self.project_root / ".aos" / "native" / "antigravity-seen.txt"
+        seen_file.parent.mkdir(parents=True, exist_ok=True)
+        seen_file.write_text(f"{conv_id}\n", encoding="utf-8")
+        brain_dir = self.agy_home / "brain" / conv_id / ".system_generated"
+        (brain_dir / "logs").mkdir(parents=True)
+        (brain_dir / "tasks").mkdir(parents=True)
+        (brain_dir / "tasks" / "task-77.log").write_text("Created At: 2026-11-18T10:05:00Z\nDone\n", encoding="utf-8")
+        (brain_dir / "logs" / "transcript.jsonl").write_text(
+            "\n".join([
+                json.dumps({
+                    "step_index": 1,
+                    "type": "PLANNER_RESPONSE",
+                    "status": "DONE",
+                    "created_at": "2026-11-18T10:05:10Z",
+                    "tool_calls": [
+                        {
+                            "name": "run_workflow",
+                            "arguments": {"ScriptPath": "workflows/audit.py", "Description": "Audit all modules"},
+                        },
+                        {
+                            "name": "invoke_subagent",
+                            "arguments": {"Role": "Security Verifier", "TypeName": "research"},
+                        },
+                        {
+                            "name": "write_file",
+                            "arguments": {"Path": str(self.project_root / "dass_aos" / "tui" / "controller.py")},
+                        },
+                    ],
+                }),
+            ]) + "\n",
+            encoding="utf-8",
+        )
+
+        snap = collect_telemetry(self.project_root, claude_home=self.claude_home, antigravity_home=self.agy_home)
+        by_tool = {s.tool: s for s in snap.sessions}
+
+        cc = by_tool["claude-code"]
+        self.assertTrue(any("coordinar.js" in w for w in cc.workflows))
+        self.assertTrue(any("phased-delivery" in w for w in cc.workflows))
+        self.assertTrue(any("reviewer" in sub or "Lens review: security" in sub for sub in cc.subagents))
+        self.assertTrue(any("qa-worker" in sub for sub in cc.subagents))
+        self.assertIn("dass_aos/telemetry.py", cc.touched_files)
+        self.assertIn("dass_aos/tui/app.py", cc.touched_files)
+
+        sub_tasks = [t for t in cc.tasks if t.id == "agent-a111"]
+        self.assertEqual(len(sub_tasks), 1)
+        self.assertEqual(sub_tasks[0].kind, "subagent")
+        self.assertEqual(sub_tasks[0].status, "running")
+        self.assertGreater(sub_tasks[0].started_at, 0.0)
+        self.assertGreaterEqual(sub_tasks[0].updated_at, sub_tasks[0].started_at)
+        self.assertAlmostEqual(sub_tasks[0].duration_seconds, 150.0, places=0)
+
+        ag = by_tool["antigravity"]
+        self.assertTrue(any("audit.py" in w or "Audit all modules" in w for w in ag.workflows))
+        self.assertIn("dass_aos/tui/controller.py", ag.touched_files)
+        self.assertTrue(any(t.kind == "workflow" for t in ag.tasks))
+        self.assertTrue(all(t.started_at > 0 and t.updated_at >= t.started_at for t in ag.tasks))
+
+    def test_detects_pending_status_and_reason_for_claude_and_antigravity_and_emits_event(self):
+        from dass_aos.telemetry import _encode_claude_cwd, collect_telemetry, diff_snapshots
+
+        proj_dir = self.claude_home / "projects" / _encode_claude_cwd(self.project_root)
+        proj_dir.mkdir(parents=True)
+        cc_jsonl = proj_dir / "sess-pend.jsonl"
+        cc_jsonl.write_text(
+            json.dumps({
+                "type": "assistant",
+                "timestamp": "2026-11-18T11:00:00Z",
+                "message": {
+                    "stop_reason": "tool_use",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "tu-ask",
+                            "name": "AskUserQuestion",
+                            "input": {
+                                "questions": [{"question": "¿Aprobamos la Fase 2?"}],
+                            },
+                        }
+                    ],
+                },
+            }) + "\n",
+            encoding="utf-8",
+        )
+
+        conv_id = "conv-pend"
+        seen_file = self.project_root / ".aos" / "native" / "antigravity-seen.txt"
+        seen_file.parent.mkdir(parents=True, exist_ok=True)
+        seen_file.write_text(f"{conv_id}\n", encoding="utf-8")
+        agy_logs = self.agy_home / "brain" / conv_id / ".system_generated" / "logs"
+        agy_logs.mkdir(parents=True)
+        agy_jsonl = agy_logs / "transcript.jsonl"
+        agy_jsonl.write_text(
+            json.dumps({
+                "step_index": 0,
+                "type": "USER_INPUT",
+                "status": "DONE",
+                "created_at": "2026-11-18T11:00:00Z",
+                "content": "Hola",
+            }) + "\n",
+            encoding="utf-8",
+        )
+
+        snap1 = collect_telemetry(self.project_root, claude_home=self.claude_home, antigravity_home=self.agy_home)
+        cc_sess = next(s for s in snap1.sessions if s.tool == "claude-code")
+        self.assertEqual(cc_sess.status, "pending")
+        self.assertIn("¿Aprobamos la Fase 2?", cc_sess.pending_reason)
+
+        # Now Antigravity enters pending via ask_question, while Claude receives its tool_result
+        with cc_jsonl.open("a", encoding="utf-8") as fh:
+            fh.write(
+                json.dumps({
+                    "type": "user",
+                    "timestamp": "2026-11-18T11:01:00Z",
+                    "message": {"content": [{"type": "tool_result", "tool_use_id": "tu-ask", "content": "Sí"}]},
+                }) + "\n"
+            )
+        with agy_jsonl.open("a", encoding="utf-8") as fh:
+            fh.write(
+                json.dumps({
+                    "step_index": 1,
+                    "type": "PLANNER_RESPONSE",
+                    "status": "DONE",
+                    "created_at": "2026-11-18T11:01:05Z",
+                    "tool_calls": [
+                        {
+                            "name": "ask_question",
+                            "args": {"questions": json.dumps([{"question": "¿Dónde ubicar la terminal?"}])},
+                        }
+                    ],
+                }) + "\n"
+            )
+
+        snap2 = collect_telemetry(self.project_root, claude_home=self.claude_home, antigravity_home=self.agy_home)
+        cc_sess2 = next(s for s in snap2.sessions if s.tool == "claude-code")
+        ag_sess2 = next(s for s in snap2.sessions if s.tool == "antigravity")
+        self.assertNotEqual(cc_sess2.status, "pending")
+        self.assertEqual(cc_sess2.pending_reason, "")
+        self.assertEqual(ag_sess2.status, "pending")
+        self.assertIn("¿Dónde ubicar la terminal?", ag_sess2.pending_reason)
+
+        events = diff_snapshots(snap1, snap2)
+        self.assertTrue(any(ev.level == "warn" and "¿Dónde ubicar la terminal?" in ev.message for ev in events))
+
+    def test_collect_antigravity_discovers_cli_store_and_summary_metadata(self):
+        import sqlite3
+        from dass_aos.telemetry import collect_telemetry
+
+        gemini_root = self.temp_dir / ".gemini"
+        ide_home = gemini_root / "antigravity"
+        cli_home = gemini_root / "antigravity-cli"
+        ide_id = "ide-1111-2222"
+        cli_id = "cli-3333-4444"
+
+        for store, cid, app_dir, title, prompt in [
+            (ide_home, ide_id, "antigravity", "IDE Session Title", "Hola desde IDE"),
+            (cli_home, cli_id, "antigravity-cli", "CLI Session Title", "Hola desde agy CLI"),
+        ]:
+            logs_dir = store / "brain" / cid / ".system_generated" / "logs"
+            logs_dir.mkdir(parents=True)
+            (store / "conversations").mkdir(parents=True)
+            (store / "conversations" / f"{cid}.db").write_bytes(b"SQLite format 3\x00")
+            (logs_dir / "transcript.jsonl").write_text(
+                json.dumps({"step_index": 0, "type": "USER_INPUT", "status": "DONE", "content": prompt}) + "\n",
+                encoding="utf-8",
+            )
+            db_p = store / "conversation_summaries.db"
+            con = sqlite3.connect(str(db_p))
+            con.execute(
+                "CREATE TABLE conversation_summaries "
+                "(conversation_id TEXT, title TEXT, workspace_uris TEXT, app_data_dir TEXT)"
+            )
+            ws_uri = self.project_root.resolve().as_uri()
+            con.execute(
+                "INSERT INTO conversation_summaries VALUES (?, ?, ?, ?)",
+                (cid, title, json.dumps([ws_uri]), app_dir),
+            )
+            con.commit()
+            con.close()
+
+        snap = collect_telemetry(self.project_root, claude_home=self.claude_home, antigravity_home=ide_home)
+        by_id = {s.session_id: s for s in snap.sessions if s.tool == "antigravity"}
+        self.assertIn(ide_id, by_id)
+        self.assertIn(cli_id, by_id)
+        self.assertEqual(by_id[ide_id].summary_title, "IDE Session Title")
+        self.assertIn("agy-ide", by_id[ide_id].meta)
+        self.assertEqual(by_id[cli_id].summary_title, "CLI Session Title")
+        self.assertIn("agy-cli", by_id[cli_id].meta)
+
+
