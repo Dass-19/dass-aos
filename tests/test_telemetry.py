@@ -404,7 +404,13 @@ class TestTelemetry(unittest.TestCase):
         self.assertEqual(tok.cache_read_tokens, 3200)
         self.assertEqual(tok.output_tokens, 600)
         self.assertEqual(tok.thinking_tokens, 80)
-        self.assertAlmostEqual(tok.total_cost_usd, 0.45, places=2)
+        by_sess = {s.tool: s for s in tok.by_session}
+        self.assertAlmostEqual(by_sess["claude-code"].cost_usd, 0.45, places=2)
+        self.assertFalse(by_sess["claude-code"].cost_estimated)
+        self.assertGreater(by_sess["antigravity"].cost_usd, 0.0)
+        self.assertTrue(by_sess["antigravity"].cost_estimated)
+        self.assertTrue(tok.cost_estimated)
+        self.assertAlmostEqual(tok.total_cost_usd, 0.45 + by_sess["antigravity"].cost_usd, places=4)
 
         by_tool = {item.name: item for item in tok.by_tool}
         self.assertIn("run_command", by_tool)

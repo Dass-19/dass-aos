@@ -242,6 +242,63 @@ class SessionController:
             return False
         return True
 
+    def check_cli_availability(self, tool: str) -> Dict[str, Any]:
+        """Check whether the interactive CLI binary for `tool` is installed in PATH."""
+        is_win = sys.platform == "win32"
+        if tool == "claude-code":
+            binary = "claude"
+            display_name = "Claude Code CLI"
+            install_display = (
+                "irm https://claude.ai/install.ps1 | iex"
+                if is_win
+                else "curl -fsSL https://claude.ai/install.sh | bash"
+            )
+            login_hint = "Tras instalar, ejecuta `claude` e inicia sesión con tu cuenta de Anthropic."
+            docs_url = "https://docs.anthropic.com/en/docs/claude-code"
+        else:
+            binary = "agy"
+            display_name = "Antigravity CLI"
+            install_display = (
+                "irm https://antigravity.google/cli/install.ps1 | iex"
+                if is_win
+                else "curl -fsSL https://antigravity.google/cli/install.sh | bash"
+            )
+            login_hint = "Tras instalar, ejecuta `agy` e inicia sesión con tu cuenta de Google."
+            docs_url = "https://antigravity.google/docs/cli/reference"
+
+        exe = shutil.which(binary)
+        if is_win:
+            ps = shutil.which("powershell") or "powershell.exe"
+            install_argv = [
+                ps,
+                "-NoLogo",
+                "-NoExit",
+                "-Command",
+                f"{install_display}; Write-Host ''; Write-Host 'Instalación finalizada. {login_hint}' -ForegroundColor Cyan",
+            ]
+            shell_argv = [ps, "-NoLogo"]
+        else:
+            shell = os.environ.get("SHELL") or "/bin/bash"
+            install_argv = [
+                "bash",
+                "-lc",
+                f"{install_display}; echo ''; echo 'Instalación finalizada. {login_hint}'; exec {shell}",
+            ]
+            shell_argv = [shell]
+
+        return {
+            "tool": tool,
+            "binary": binary,
+            "display_name": display_name,
+            "installed": bool(exe),
+            "executable": exe or "",
+            "install_display": install_display,
+            "install_argv": install_argv,
+            "shell_argv": shell_argv,
+            "login_hint": login_hint,
+            "docs_url": docs_url,
+        }
+
     def build_interactive_cli_command(self, sess: AgentSessionInfo) -> List[str]:
         """Build the interactive CLI command to run inside a live PTY pane (`ADR-011`)."""
         if sess.tool == "claude-code":

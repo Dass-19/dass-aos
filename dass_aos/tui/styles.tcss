@@ -16,6 +16,10 @@ Screen {
     color: #e2e8f0;
 }
 
+Button:focus {
+    text-style: bold;
+}
+
 * {
     scrollbar-size-vertical: 1;
     scrollbar-background: #0b121c;
@@ -173,10 +177,163 @@ Tab.-active {
     overflow-x: hidden;
 }
 
-/* Modal overlays (Help `?` & Panel Zoom `z`) */
-HelpScreen, ZoomScreen {
+/* Modal overlays (Help `?`, Panel Zoom `z`, New Session, CLI Install) */
+HelpScreen, ZoomScreen, NewSessionScreen, CliInstallScreen {
     align: center middle;
     background: rgba(6, 11, 17, 0.85);
+}
+
+#cli-install-dialog {
+    width: 72;
+    height: auto;
+    background: #0b121c;
+    border: round $gold;
+    border-title-color: $gold-l;
+    border-title-style: bold;
+    padding: 1 2;
+}
+
+#cli-install-body {
+    margin-bottom: 1;
+}
+
+#cli-install-actions {
+    height: 3;
+    align: right middle;
+}
+
+#cli-install-actions Button {
+    min-width: 12;
+    height: 3;
+    padding: 0 1;
+    margin-left: 1;
+    background: #0b121c;
+    border: round $line;
+    color: #94a3b8;
+    text-style: bold;
+}
+
+#cli-install-actions Button:hover {
+    background: #0b121c;
+    border: round #64748b;
+    color: #f8fafc;
+}
+
+#cli-install-actions Button:focus {
+    background: #0b121c;
+    border: heavy #94a3b8;
+    color: #f8fafc;
+}
+
+#cli-install-actions #btn-cli-install {
+    border: round $gold;
+    color: $gold-l;
+}
+
+#cli-install-actions #btn-cli-install:hover {
+    background: #0b121c;
+    border: round #f6dc9c;
+    color: #fef3c7;
+}
+
+#cli-install-actions #btn-cli-install:focus {
+    background: #0b121c;
+    border: heavy $gold-l;
+    color: #fef3c7;
+}
+
+#cli-install-actions #btn-cli-shell {
+    border: round $blue;
+    color: $blue-l;
+}
+
+#cli-install-actions #btn-cli-shell:hover {
+    background: #0b121c;
+    border: round #c7dcf4;
+    color: #e2efff;
+}
+
+#cli-install-actions #btn-cli-shell:focus {
+    background: #0b121c;
+    border: heavy $blue-l;
+    color: #e2efff;
+}
+
+#new-session-dialog {
+    width: 56;
+    height: auto;
+    background: #0b121c;
+    border: round $gold;
+    border-title-color: $gold-l;
+    border-title-style: bold;
+    padding: 1 2;
+}
+
+.modal-label {
+    color: #94a3b8;
+    margin-top: 1;
+    margin-bottom: 0;
+}
+
+#new-session-tools {
+    height: 1;
+    margin-top: 1;
+    margin-bottom: 1;
+}
+
+#new-session-name-input {
+    background: #060b11;
+    border: round $line;
+    margin-top: 1;
+    margin-bottom: 1;
+}
+
+#new-session-name-input:focus {
+    border: round $gold;
+}
+
+#new-session-actions {
+    height: 3;
+    align: right middle;
+}
+
+#new-session-actions Button {
+    min-width: 10;
+    height: 3;
+    margin-left: 1;
+    background: #0b121c;
+    border: round $line;
+    color: #94a3b8;
+    text-style: bold;
+}
+
+#new-session-actions Button:hover {
+    background: #0b121c;
+    border: round #64748b;
+    color: #f8fafc;
+}
+
+#new-session-actions Button:focus {
+    background: #0b121c;
+    border: heavy #94a3b8;
+    color: #f8fafc;
+}
+
+#new-session-actions #btn-new-session-ok {
+    border: round $gold;
+    color: $gold-l;
+}
+
+#new-session-actions #btn-new-session-ok:hover {
+    background: #0b121c;
+    border: round #f6dc9c;
+    color: #fef3c7;
+}
+
+#new-session-actions #btn-new-session-ok:focus {
+    background: #0b121c;
+    border: heavy $gold-l;
+    color: #fef3c7;
 }
 
 #help-dialog {
@@ -270,12 +427,115 @@ Screen.theme-violet Tab.-active {
 }
 
 #agents-sessions-box {
-    height: 1fr;
+    height: 3fr;
     margin-bottom: 1;
 }
 
 #agents-tasks-box {
-    height: 1fr;
+    height: 2fr;
+}
+
+#tasks-filter-bar {
+    height: 1;
+    layout: horizontal;
+    margin-bottom: 1;
+}
+
+.filter-pill {
+    min-width: 10;
+    width: auto;
+    height: 1;
+    border: none;
+    padding: 0 1;
+    margin-right: 1;
+    background: #0b121c;
+    color: #64748b;
+}
+
+.filter-pill:hover {
+    background: #111c2d;
+    color: #cbd5e1;
+}
+
+.filter-pill:focus {
+    background: #16243a;
+    color: #e2e8f0;
+}
+
+.filter-pill.-active {
+    background: #1a2740;
+    color: $gold-l;
+    text-style: bold;
+}
+
+.filter-pill.-active:hover {
+    background: #21314f;
+    color: #f6dc9c;
+}
+
+#agent-view-bar {
+    height: 1;
+    layout: horizontal;
+    margin-bottom: 1;
+    align: left middle;
+}
+
+#agent-view-spacer {
+    width: 1fr;
+    height: 1;
+}
+
+.view-pill {
+    min-width: 8;
+    width: auto;
+    height: 1;
+    border: none;
+    padding: 0 2;
+    margin-right: 1;
+    background: #0b121c;
+    color: #94a3b8;
+}
+
+.view-pill:hover {
+    background: #111c2d;
+    color: #e2e8f0;
+}
+
+.view-pill:focus {
+    background: #16243a;
+    color: #f8fafc;
+}
+
+.view-pill.-active {
+    background: #1a2740;
+    color: $gold-l;
+    text-style: bold;
+}
+
+.view-pill.-active:hover {
+    background: #21314f;
+    color: #f6dc9c;
+}
+
+.view-action-pill {
+    min-width: 9;
+    width: auto;
+    height: 1;
+    border: none;
+    padding: 0 1;
+    background: #0f1c2e;
+    color: $blue-l;
+    text-style: bold;
+}
+
+.view-action-pill:hover {
+    background: #162840;
+    color: #c7dcf4;
+}
+
+.view-action-pill:focus {
+    background: #1c3250;
+    color: #e2efff;
 }
 
 #agents-activity-box {
@@ -320,31 +580,52 @@ Screen.theme-violet Tab.-active {
     min-width: 18;
     margin-right: 1;
     background: #060b11;
-    border: round $gold;
+    border: round $line;
 }
 
 #agent-prompt-input:focus {
-    border: round $gold-l;
+    border: round $gold;
 }
 
 #agent-composer-row Button {
-    min-width: 5;
+    min-width: 7;
     width: auto;
     height: 3;
-    padding: 0;
-    margin-right: 0;
+    padding: 0 1;
+    margin-right: 1;
     background: #060b11;
     border: round $line;
     color: #e2e8f0;
     text-style: bold;
 }
 
+#agent-composer-row Button:hover {
+    background: #060b11;
+    border: round #64748b;
+    color: #f8fafc;
+}
+
+#agent-composer-row Button:focus {
+    background: #060b11;
+    border: heavy #94a3b8;
+    color: #f8fafc;
+}
+
 #agent-composer-row #btn-agent-attach { border: round $gold; color: $gold-l; }
-#agent-composer-row #btn-agent-graph { border: round #7c5cbf; color: #a78bfa; }
-#agent-composer-row #btn-agent-view { border: round $blue; color: $blue-l; }
-#agent-composer-row #btn-agent-new { border: round $blue; color: $blue-l; }
+#agent-composer-row #btn-agent-attach:hover { background: #060b11; border: round #f6dc9c; color: #fef3c7; }
+#agent-composer-row #btn-agent-attach:focus { background: #060b11; border: heavy $gold-l; color: #fef3c7; }
+#agent-composer-row #btn-agent-attach.-pty-live { background: #060b11; border: heavy $gold-l; color: #fde68a; }
+#agent-composer-row #btn-agent-attach.-pty-live:hover { background: #060b11; border: heavy #fef3c7; color: #fef3c7; }
+
 #agent-composer-row #btn-agent-voice { border: round $olive; color: $olive-l; }
+#agent-composer-row #btn-agent-voice:hover { background: #060b11; border: round #c9d8cd; color: #e2efe5; }
+#agent-composer-row #btn-agent-voice:focus { background: #060b11; border: heavy #34d399; color: #d1fae5; }
+#agent-composer-row #btn-agent-voice.-voice-on { background: #060b11; border: heavy #34d399; color: #34d399; }
+#agent-composer-row #btn-agent-voice.-voice-on:hover { background: #060b11; border: heavy #6ee7b7; color: #6ee7b7; }
+
 #agent-composer-row #btn-agent-stop { border: round $terra; color: $terra-l; margin-right: 0; }
+#agent-composer-row #btn-agent-stop:hover { background: #060b11; border: round #f87171; color: #fecaca; }
+#agent-composer-row #btn-agent-stop:focus { background: #060b11; border: heavy #f87171; color: #fecaca; }
 
 #git-files-box {
     height: 2fr;
@@ -388,40 +669,37 @@ Screen.theme-violet Tab.-active {
     text-style: bold;
 }
 
+#knowledge-view-bar {
+    height: 1;
+    layout: horizontal;
+    margin-bottom: 1;
+    align: left middle;
+}
+
 #knowledge-grid {
     height: 1fr;
     layout: horizontal;
 }
 
 #knowledge-left {
-    width: 1fr;
+    width: 2fr;
     height: 100%;
     margin-right: 1;
     layout: vertical;
 }
 
 #knowledge-right {
-    width: 1fr;
+    width: 3fr;
     height: 100%;
     layout: vertical;
 }
 
-#rag-results-box {
-    height: 3fr;
-    margin-bottom: 1;
-}
-
-#gotchas-box {
-    height: 2fr;
-}
-
-#doctor-box {
-    height: 3fr;
-    margin-bottom: 1;
-}
-
-#native-box {
-    height: 2fr;
+#rag-results-box,
+#gotchas-box,
+#doctor-box,
+#lessons-box,
+#knowledge-detail-box {
+    height: 1fr;
 }
 
 #tokens-grid {
@@ -469,32 +747,51 @@ Screen.theme-violet Tab.-active {
 
 #runner-toolbar Button {
     margin-right: 1;
-    min-width: 15;
+    min-width: 13;
     height: 3;
+    padding: 0 1;
     background: #060b11;
     border: round $line;
     color: #e2e8f0;
     text-style: bold;
 }
 
-#runner-toolbar Button:hover, #runner-toolbar Button:focus {
-    background: #0f1826;
-    text-style: bold reverse;
+#runner-toolbar Button:hover {
+    background: #060b11;
+    border: round #64748b;
+    color: #f8fafc;
+}
+
+#runner-toolbar Button:focus {
+    background: #060b11;
+    border: heavy #94a3b8;
+    color: #f8fafc;
 }
 
 /* One logo bar color per action */
 #runner-toolbar #btn-verify { border: round $olive; color: $olive-l; }
+#runner-toolbar #btn-verify:hover { background: #060b11; border: round #c9d8cd; color: #e2efe5; }
+#runner-toolbar #btn-verify:focus { background: #060b11; border: heavy #34d399; color: #d1fae5; }
+
 #runner-toolbar #btn-scan { border: round $terra; color: $terra-l; }
-#runner-toolbar #btn-sync { border: round $blue; color: $blue-l; }
-#runner-toolbar #btn-refresh-cmd { border: round $gold; color: $gold-l; }
+#runner-toolbar #btn-scan:hover { background: #060b11; border: round #f87171; color: #fecaca; }
+#runner-toolbar #btn-scan:focus { background: #060b11; border: heavy #f87171; color: #fecaca; }
+
+#runner-toolbar #btn-update { border: round $gold; color: $gold-l; }
+#runner-toolbar #btn-update:hover { background: #060b11; border: round #f6dc9c; color: #fef3c7; }
+#runner-toolbar #btn-update:focus { background: #060b11; border: heavy $gold-l; color: #fef3c7; }
+
+#runner-toolbar #btn-doctor { border: round $blue; color: $blue-l; }
+#runner-toolbar #btn-doctor:hover { background: #060b11; border: round #c7dcf4; color: #e2efff; }
+#runner-toolbar #btn-doctor:focus { background: #060b11; border: heavy $blue-l; color: #e2efff; }
 
 #runner-status-bar {
+    width: 1fr;
     height: 3;
     background: #060b11;
     border: round $line;
     padding: 0 2;
-    margin-bottom: 1;
-    content-align: left middle;
+    content-align: right middle;
 }
 
 #runner-output-box {

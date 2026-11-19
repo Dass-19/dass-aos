@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import difflib
 import re
 from collections import Counter
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -275,9 +276,12 @@ def format_kpi_tok_context(snap: TelemetrySnapshot, inner_width: int = 28) -> Te
     always_on = sum(w.est_tokens for w in tok.harness_weights if w.cost_class == "always-on")
     t.append(f"Harness fijo: ~{format_tokens_compact(always_on)}/turno\n", style="#cbd5e1")
     if tok.total_cost_usd > 0:
-        t.append(f"Costo Claude: ${tok.total_cost_usd:.2f}\n", style="bold #34d399")
+        if tok.cost_estimated:
+            t.append(f"Costo est.: ~${tok.total_cost_usd:.2f}\n", style="bold #34d399")
+        else:
+            t.append(f"Costo USD: ${tok.total_cost_usd:.2f}\n", style="bold #34d399")
     else:
-        t.append("Costo USD: n/d (Agy)\n", style="#64748b")
+        t.append("Costo USD: n/d\n", style="#64748b")
     t.append(f"Sesiones medidas: {len(tok.by_session)}", style="#94a3b8")
     return t
 
@@ -299,21 +303,205 @@ def format_live_event(ev: LiveEvent) -> Text:
     return t
 
 
-def format_diff_lines(diff_text: str) -> Iterable[Text]:
-    """Colorize unified git diff lines for RichLog."""
+_DIFF_HUNK_RE = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@ ?(.*)$")
+_COMMIT_PREFIX_RE = re.compile(r"^([a-zA-Z]+(?:\([^)]+\))?!?:)\s*(.*)$")
+
+
+def diff_stats(diff_text: str) -> Tuple[int, int, int]:
+    """Return `(added, removed, hunks)` counts for a unified git diff."""
+    added = 0
+    removed = 0
+    hunks = 0
     for line in diff_text.splitlines():
-        if line.startswith("+++") or line.startswith("---"):
-            yield Text(line, style="bold #94a3b8")
-        elif line.startswith("@@"):
-            yield Text(line, style="bold #38bdf8")
+        if line.startswith("@@"):
+            hunks += 1
+        elif line.startswith("+") and not line.startswith("+++"):
+            added += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            removed += 1
+    return added, removed, hunks
+
+
+def _render_inline_diff_pair(
+    old_no: int,
+    old_text: str,
+    new_no: int,
+    new_text: str,
+    gutter_w: int,
+) -> Tuple[Text, Text]:
+    """Render a paired deletion/addition with intra-line change highlighting."""
+    sm = difflib.SequenceMatcher(None, old_text, new_text)
+    ratio = sm.ratio()
+
+    t_old = Text(no_wrap=True)
+    t_old.append(f"{old_no:>{gutter_w}} {' ' * gutter_w} │ ", style="#9f5a60 on #1b1016")
+    t_old.append("− ", style="bold #f87171 on #261319")
+
+    t_new = Text(no_wrap=True)
+    t_new.append(f"{' ' * gutter_w} {new_no:>{gutter_w}} │ ", style="#4d8f73 on #0c1d18")
+    t_new.append("+ ", style="bold #34d399 on #0f261f")
+
+    if ratio < 0.35 or (not old_text.strip() and not new_text.strip()):
+        t_old.append(old_text, style="#fca5a5 on #261319")
+        t_new.append(new_text, style="#a7f3d0 on #0f261f")
+        return t_old, t_new
+
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "equal":
+            t_old.append(old_text[i1:i2], style="#fca5a5 on #261319")
+            t_new.append(new_text[j1:j2], style="#a7f3d0 on #0f261f")
+        elif tag == "replace":
+            t_old.append(old_text[i1:i2], style="bold #fee2e2 on #5c1d24")
+            t_new.append(new_text[j1:j2], style="bold #ecfdf5 on #14533c")
+        elif tag == "delete":
+            t_old.append(old_text[i1:i2], style="bold #fee2e2 on #5c1d24")
+        elif tag == "insert":
+            t_new.append(new_text[j1:j2], style="bold #ecfdf5 on #14533c")
+    return t_old, t_new
+
+
+def _render_single_diff_line(kind: str, old_no: Optional[int], new_no: Optional[int], body: str, gutter_w: int) -> Text:
+    t = Text(no_wrap=True)
+    o_str = f"{old_no:>{gutter_w}}" if old_no is not None else " " * gutter_w
+    n_str = f"{new_no:>{gutter_w}}" if new_no is not None else " " * gutter_w
+    if kind == "-":
+        t.append(f"{o_str} {n_str} │ ", style="#9f5a60 on #1b1016")
+        t.append("− ", style="bold #f87171 on #261319")
+        t.append(body, style="#fca5a5 on #261319")
+    elif kind == "+":
+        t.append(f"{o_str} {n_str} │ ", style="#4d8f73 on #0c1d18")
+        t.append("+ ", style="bold #34d399 on #0f261f")
+        t.append(body, style="#a7f3d0 on #0f261f")
+    else:
+        t.append(f"{o_str} {n_str} │ ", style="#475569")
+        t.append("  ", style="#475569")
+        t.append(body, style="#cbd5e1")
+    return t
+
+
+def format_diff_lines(diff_text: str) -> Iterable[Text]:
+    """Render a clean GitHub/Delta-style diff with line numbers, tinted rows, and inline highlights."""
+    raw_lines = diff_text.splitlines()
+    has_hunks = any(_DIFF_HUNK_RE.match(ln) for ln in raw_lines)
+    if not has_hunks:
+        for line in raw_lines:
+            if line.startswith(("diff --git", "index ")):
+                yield Text(line, style="#64748b")
+            elif line.startswith("+"):
+                yield Text(line, style="#a7f3d0 on #0f261f")
+            elif line.startswith("-"):
+                yield Text(line, style="#fca5a5 on #261319")
+            else:
+                yield Text(line, style="#cbd5e1")
+        return
+
+    # Compute gutter width from max line number present
+    max_line = 99
+    old_ln = 0
+    new_ln = 0
+    for line in raw_lines:
+        m = _DIFF_HUNK_RE.match(line)
+        if m:
+            old_ln, new_ln = int(m.group(1)), int(m.group(2))
+            max_line = max(max_line, old_ln, new_ln)
+        elif line.startswith("-") and not line.startswith("---"):
+            old_ln += 1
+            max_line = max(max_line, old_ln)
+        elif line.startswith("+") and not line.startswith("+++"):
+            new_ln += 1
+            max_line = max(max_line, new_ln)
+        elif line.startswith(" "):
+            old_ln += 1
+            new_ln += 1
+            max_line = max(max_line, old_ln, new_ln)
+    gutter_w = max(3, len(str(max_line)))
+
+    old_ln = 0
+    new_ln = 0
+    del_buf: List[Tuple[int, str]] = []
+    add_buf: List[Tuple[int, str]] = []
+    first_hunk = True
+
+    def _flush_buffers() -> List[Text]:
+        out: List[Text] = []
+        if not del_buf and not add_buf:
+            return out
+        paired = min(len(del_buf), len(add_buf))
+        rendered_new: List[Text] = []
+        for idx in range(paired):
+            t_old, t_new = _render_inline_diff_pair(
+                del_buf[idx][0], del_buf[idx][1],
+                add_buf[idx][0], add_buf[idx][1],
+                gutter_w,
+            )
+            out.append(t_old)
+            rendered_new.append(t_new)
+        for o_no, o_txt in del_buf[paired:]:
+            out.append(_render_single_diff_line("-", o_no, None, o_txt, gutter_w))
+        out.extend(rendered_new)
+        for n_no, n_txt in add_buf[paired:]:
+            out.append(_render_single_diff_line("+", None, n_no, n_txt, gutter_w))
+        del_buf.clear()
+        add_buf.clear()
+        return out
+
+    for line in raw_lines:
+        if line.startswith(("diff --git", "index ", "--- ", "+++ ")):
+            continue
+        m = _DIFF_HUNK_RE.match(line)
+        if m:
+            for item in _flush_buffers():
+                yield item
+            if not first_hunk:
+                yield Text("")
+            first_hunk = False
+            old_ln, new_ln = int(m.group(1)), int(m.group(2))
+            ctx = m.group(3).strip()
+            hdr = Text(no_wrap=True)
+            hdr.append(f"{'·' * gutter_w} {'·' * gutter_w} ╭─ ", style="#3b5270 on #162238")
+            hdr.append(f"Línea {new_ln}", style="bold #8aa8cc on #162238")
+            if ctx:
+                hdr.append(f"  ·  {ctx}", style="#94a3b8 on #162238")
+            hdr.append(" ", style="on #162238")
+            yield hdr
+            continue
+        if line.startswith("-"):
+            if add_buf:
+                for item in _flush_buffers():
+                    yield item
+            del_buf.append((old_ln, line[1:]))
+            old_ln += 1
         elif line.startswith("+"):
-            yield Text(line, style="#34d399")
-        elif line.startswith("-"):
-            yield Text(line, style="#f87171")
-        elif line.startswith("diff --git") or line.startswith("index "):
-            yield Text(line, style="bold #a78bfa")
-        else:
-            yield Text(line, style="#cbd5e1")
+            add_buf.append((new_ln, line[1:]))
+            new_ln += 1
+        elif line.startswith(" "):
+            for item in _flush_buffers():
+                yield item
+            yield _render_single_diff_line(" ", old_ln, new_ln, line[1:], gutter_w)
+            old_ln += 1
+            new_ln += 1
+        elif line.startswith("\\"):
+            for item in _flush_buffers():
+                yield item
+            yield Text(f"{' ' * (gutter_w * 2 + 2)}│ {line}", style="#64748b")
+
+    for item in _flush_buffers():
+        yield item
+
+
+def format_git_commit_line(commit_line: str) -> Text:
+    """Format `hash subject` cleanly without noisy wrapping."""
+    sha, _, msg = commit_line.partition(" ")
+    t = Text(no_wrap=True, overflow="ellipsis")
+    t.append(sha, style="bold #d9b15f")
+    t.append("  ", style="#475569")
+    m = _COMMIT_PREFIX_RE.match(msg)
+    if m:
+        t.append(m.group(1) + " ", style="#8aa8cc")
+        t.append(m.group(2), style="#cbd5e1")
+    else:
+        t.append(msg, style="#cbd5e1")
+    return t
 
 
 _OUTPUT_RULES = (
@@ -537,6 +725,18 @@ def format_task_datetime(started_at: float, updated_at: float = 0.0) -> str:
     return f"{dt_str} ({age})" if age != "-" else dt_str
 
 
+def format_task_time_compact(started_at: float, updated_at: float = 0.0) -> str:
+    """Compact time cell for the Tasks table (`HH:MM · dur` or `HH:MM` / age)."""
+    anchor = started_at if started_at > 0 else updated_at
+    if anchor <= 0:
+        return "-"
+    hhmm = dt.datetime.fromtimestamp(anchor).strftime("%H:%M")
+    if started_at > 0 and updated_at > started_at:
+        return f"{hhmm} · {format_duration_compact(updated_at - started_at)}"
+    age = compact_age(anchor)
+    return f"{hhmm} ({age})" if age != "-" else hhmm
+
+
 def format_task_log_header(task: AgentTaskInfo) -> str:
     """Build the border title for the task log panel with start → end and duration (`CA-2`)."""
     start_ts = task.started_at if task.started_at > 0 else task.updated_at
@@ -687,38 +887,35 @@ def format_subagent_graph(
         elif low.startswith(("subagent:", "agent:", "task:", "run_workflow:", "workflow:")):
             interactions.append((act.timestamp[:8], "spawn", summ))
 
-    # 1. Root Coordinator Box
-    out.append("╭── ◆ COORDINADOR · ", style="bold #38bdf8")
+    # 1. Root Coordinator Header (clean, no nested box border inside the panel)
+    out.append("◆ COORDINADOR  ", style="bold #8aa8cc")
     out.append_text(agent_badge(sess.tool))
     out.append(f" {sess.title} ", style="bold #f8fafc")
-    out.append(f"({sess.session_id[:8]}) · ", style="#64748b")
+    out.append(f"({sess.session_id[:8]})  ", style="#64748b")
     out.append_text(status_text(sess.status))
-    out.append("\n│   ", style="bold #38bdf8")
-    out.append(f"Subagentes: {len(nodes)}", style="bold #c46a6a")
-    out.append(f"  ·  Workflows: {len(sess.workflows)}", style="#38bdf8")
-    out.append(f"  ·  Archivos: {len(sess.touched_files)}", style="#9aa59c")
-    out.append(f"  ·  Tools: {len(sess.recent_tools)}\n", style="#d9b15f")
+    out.append("\n  ", style="#475569")
+    out.append(f"{len(nodes)} subagente(s)", style="bold #c46a6a" if nodes else "#64748b")
+    out.append(f"  ·  {len(sess.workflows)} workflow(s)", style="#8aa8cc" if sess.workflows else "#64748b")
+    out.append(f"  ·  {len(sess.touched_files)} archivo(s)", style="#9aa59c" if sess.touched_files else "#64748b")
+    out.append(f"  ·  {len(sess.recent_tools)} tool(s)\n", style="#d9b15f" if sess.recent_tools else "#64748b")
     if sess.workflows:
-        out.append("│   ", style="bold #38bdf8")
-        out.append("Pipeline: ", style="bold #94a3b8")
-        out.append(" ──► ".join(sess.workflows[:6]) + "\n", style="#38bdf8")
-    out.append("╰───┬──────────────────────────────────────────────────────────────────────\n", style="bold #38bdf8")
+        out.append("  Pipeline: ", style="bold #94a3b8")
+        out.append(" ──► ".join(sess.workflows[:6]) + "\n", style="#8aa8cc")
 
     # 2. Subagent Nodes & Edges
     if not nodes:
-        out.append("    │\n", style="#475569")
-        out.append("    ╰── ○ Sin subagentes delegados en esta sesión todavía.\n", style="#64748b")
-        out.append("        (Cuando el agente invoca subagentes, swarm o workflows, aparecen aquí en tiempo real)\n", style="#475569")
+        out.append("\n  ○ Sin subagentes delegados en esta sesión todavía.\n", style="#64748b")
+        out.append("    Cuando el agente invoque subagentes, swarm o workflows aparecerán aquí.\n", style="#475569")
     else:
         for idx, node in enumerate(nodes):
             is_last = idx == len(nodes) - 1 and not interactions
-            branch = "    ╰─" if is_last else "    ├─"
-            pipe = "      " if is_last else "    │ "
+            branch = "  ╰─" if is_last else "  ├─"
+            pipe = "    " if is_last else "  │ "
             edge_lbl = "workflow" if node["kind"] == "workflow" else "spawn"
 
-            out.append("    │\n", style="#475569")
-            out.append(branch, style="bold #475569")
-            out.append(f"──[{edge_lbl}]──► ", style="bold #d9b15f")
+            out.append("  │\n", style="#2f4058")
+            out.append(branch, style="#2f4058")
+            out.append(f"─[{edge_lbl}]──► ", style="bold #d9b15f")
             out.append("● ", style="bold #c46a6a")
             out.append(node["name"], style="bold #f8fafc")
             if node["agent_type"] and node["agent_type"].lower() != node["name"].lower():
@@ -730,28 +927,28 @@ def format_subagent_graph(
             out.append("\n")
 
             if node["detail"]:
-                out.append(pipe, style="#475569")
+                out.append(pipe, style="#2f4058")
                 if node["status"] in ("finished", "completed", "done"):
-                    out.append("   ◄──[report]── ", style="bold #34d399")
+                    out.append(" ◄──[report]── ", style="bold #34d399")
                 else:
-                    out.append("   ──[working]─► ", style="bold #fbbf24")
+                    out.append(" ──[working]─► ", style="bold #fbbf24")
                 out.append(node["detail"][:96] + "\n", style="#cbd5e1")
 
     # 3. Inter-Agent Message & Delegation Bus
     if interactions:
-        out.append("    │\n", style="#475569")
-        out.append("    ╰── ◆ FLUJO DE INTERACCIÓN & MENSAJES ENTRE AGENTES\n", style="bold #a78bfa")
+        out.append("  │\n", style="#2f4058")
+        out.append("  ╰── ◆ MENSAJES ENTRE AGENTES\n", style="bold #8aa8cc")
         for ts, ikind, summ in interactions[-10:]:
-            out.append("        ", style="#475569")
+            out.append("      ", style="#475569")
             out.append(f"{ts}  ", style="#64748b")
             if ikind == "recv":
-                out.append("COORDINADOR ◄──[recv_message]─── ", style="bold #34d399")
+                out.append("◄── recv  ", style="bold #34d399")
                 out.append(summ + "\n", style="#e2e8f0")
             elif ikind == "msg":
-                out.append("COORDINADOR ──[send_message]──► ", style="bold #a78bfa")
+                out.append("──► send  ", style="bold #8aa8cc")
                 out.append(summ + "\n", style="#e2e8f0")
             else:
-                out.append("COORDINADOR ──[delegate]──────► ", style="bold #d9b15f")
+                out.append("──► spawn ", style="bold #d9b15f")
                 out.append(summ + "\n", style="#cbd5e1")
 
     # 4. Other active multi-agent sessions in the project
@@ -759,13 +956,13 @@ def format_subagent_graph(
         s for s in all_sessions if s.session_id != sess.session_id and (s.subagents or s.workflows)
     ]
     if other_multi:
-        out.append("\n◆ OTRAS SESIONES CON SUBAGENTES EN EL PROYECTO\n", style="bold #94a3b8")
+        out.append("\n◆ OTRAS SESIONES CON SUBAGENTES\n", style="bold #94a3b8")
         for osess in other_multi[:4]:
             out.append("  • ", style="#475569")
             out.append_text(agent_badge(osess.tool))
             out.append(f" {osess.title[:30]} ", style="bold #cbd5e1")
             out.append_text(status_text(osess.status))
-            out.append(f" ──► {len(osess.subagents)} subagente(s)", style="#c46a6a")
+            out.append(f" ──► {len(osess.subagents)} sub", style="#c46a6a")
             if osess.subagents:
                 out.append(f" ({', '.join(osess.subagents[:4])})", style="#94a3b8")
             out.append("\n")
@@ -788,6 +985,56 @@ def severity_text(sev: str) -> Text:
 
 def level_text(level: str) -> Text:
     return Text(level.upper(), style=f"bold {LEVEL_COLORS.get(level.lower(), '#94a3b8')}")
+
+
+_LESSON_EVIDENCE_RE = re.compile(r"\s*\(evidencia:\s*(.*)\)\s*$", re.DOTALL | re.IGNORECASE)
+
+
+def parse_lesson_entry(raw: str) -> Tuple[str, str, str, str]:
+    """Parse a LEDGER.md lesson line into `(date, artifact, effect, evidence)`."""
+    text = raw.strip().lstrip("-• ").strip()
+    date_s = "-"
+    rest = text
+    if "·" in text:
+        head, tail = text.split("·", 1)
+        clean_head = head.replace("**", "").strip()
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", clean_head):
+            date_s = clean_head
+            rest = tail.strip()
+
+    evidence_s = ""
+    m_ev = _LESSON_EVIDENCE_RE.search(rest)
+    if m_ev:
+        evidence_s = m_ev.group(1).strip()
+        rest = rest[: m_ev.start()].strip()
+
+    artifact_s = ""
+    effect_s = rest
+    for arrow in ("→", "->"):
+        if arrow in rest:
+            art, eff = rest.split(arrow, 1)
+            artifact_s = art.replace("`", "").strip()
+            effect_s = eff.strip()
+            break
+
+    return date_s, artifact_s, effect_s, evidence_s
+
+
+def format_lesson_detail(raw: str) -> Text:
+    """Render a LEDGER.md lesson cleanly with separate Fecha, Artefacto, Regla, and Evidencia."""
+    date_s, artifact_s, effect_s, evidence_s = parse_lesson_entry(raw)
+    t = Text()
+    t.append("Fecha       ", style="bold #94a3b8")
+    t.append(f"{date_s}\n", style="#8aa8cc")
+    if artifact_s:
+        t.append("Artefacto   ", style="bold #94a3b8")
+        t.append(f"{artifact_s}\n", style="bold #d9b15f")
+    t.append("\nRegla / Efecto\n", style="bold #34d399")
+    t.append(f"  {effect_s.replace('`', '')}\n", style="#f8fafc")
+    if evidence_s:
+        t.append("\nEvidencia\n", style="bold #8aa8cc")
+        t.append(f"  {evidence_s.replace('`', '')}\n", style="#cbd5e1")
+    return t
 
 
 def format_knowledge_zoom(rag, findings: Sequence, gotchas: Sequence) -> Text:

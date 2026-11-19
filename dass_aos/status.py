@@ -15,7 +15,7 @@ import json
 import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional, Sequence
 
 from .constants import AOS_DIR_NAME, configure_utf8_output
 from .specs import open_specs
@@ -158,7 +158,7 @@ def derive_state(plan: Optional[PlanStatus]) -> tuple[str, str]:
     return WORKING, f"siguiente fase: {plan.next_task}"
 
 
-def build_report(project_root: Path) -> StatusReport:
+def build_report(project_root: Path, findings: Optional[Sequence[Any]] = None) -> StatusReport:
     plans = active_plan_files(project_root)
     plan = read_plan(plans[0]) if plans else None
     state, reason = derive_state(plan)
@@ -166,10 +166,13 @@ def build_report(project_root: Path) -> StatusReport:
     specs = open_specs(project_root, limit=100)
     without_pair = [s for s in specs if not s.has_counterpart]
 
-    # Imported here: doctor imports sync/memory, and status must stay cheap when unused.
-    from .doctor import collect_findings
+    if findings is None:
+        # Imported here: doctor imports sync/memory, and status must stay cheap when unused.
+        from .doctor import collect_findings
 
-    doctor_errors = sum(1 for finding in collect_findings(project_root) if finding.level == "error")
+        findings = collect_findings(project_root)
+
+    doctor_errors = sum(1 for finding in findings if finding.level == "error")
 
     extras: List[str] = []
     if plan and plan.total:

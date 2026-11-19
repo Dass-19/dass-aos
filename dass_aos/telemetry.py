@@ -221,6 +221,7 @@ class SessionTokenSummary:
     thinking_tokens: int = 0
     context_window_tokens: int = 0
     cost_usd: float = 0.0
+    cost_estimated: bool = False
 
     @property
     def total_tokens(self) -> int:
@@ -237,6 +238,7 @@ class TokenSummary:
     thinking_tokens: int = 0
     context_window_tokens: int = 0
     total_cost_usd: float = 0.0
+    cost_estimated: bool = False
     by_category: List[TokenConsumer] = field(default_factory=list)
     by_tool: List[TokenConsumer] = field(default_factory=list)
     by_session: List[SessionTokenSummary] = field(default_factory=list)
@@ -391,15 +393,77 @@ def _run_git(project_root: Path, args: Sequence[str]) -> Optional[str]:
         return None
 
 
+_GIT_LOG_CACHE: Dict[Tuple[str, str], List[str]] = {}
+_DEPS_CACHE: Dict[str, Tuple[float, List[Tuple[str, str]]]] = {}
+_DEPS_CACHE_TTL_SECONDS = 45.0
+
+
+def _read_git_head_sha(project_root: Path) -> str:
+    """Resolve current Git HEAD commit SHA directly from `.git/` in <0.1ms (no subprocess)."""
+    git_entry = project_root / ".git"
+    try:
+        if git_entry.is_file():
+            raw = git_entry.read_text(encoding="utf-8", errors="ignore").strip()
+            if raw.startswith("gitdir:"):
+                git_dir = Path(raw.split(":", 1)[1].strip())
+                if not git_dir.is_absolute():
+                    git_dir = (project_root / git_dir).resolve()
+            else:
+                return ""
+        elif git_entry.is_dir():
+            git_dir = git_entry
+        else:
+            return ""
+
+        head_file = git_dir / "HEAD"
+        if not head_file.is_file():
+            return ""
+        head_txt = head_file.read_text(encoding="utf-8", errors="ignore").strip()
+        if not head_txt.startswith("ref:"):
+            return head_txt
+        ref_rel = head_txt.split(":", 1)[1].strip()
+        ref_file = git_dir / ref_rel
+        if ref_file.is_file():
+            return ref_file.read_text(encoding="utf-8", errors="ignore").strip()
+        # Fallback for packed refs
+        packed = git_dir / "packed-refs"
+        if packed.is_file():
+            for line in packed.read_text(encoding="utf-8", errors="ignore").splitlines():
+                if line.startswith("#") or " " not in line:
+                    continue
+                sha, ref_name = line.split(" ", 1)
+                if ref_name.strip() == ref_rel:
+                    return sha.strip()
+        return head_txt
+    except OSError:
+        return ""
+
+
+def _parse_porcelain_branch(header_line: str) -> str:
+    """Extract branch name from `git status --porcelain=v1 -b` header (`## ...`)."""
+    raw = header_line[2:].strip()
+    if raw.startswith("No commits yet on "):
+        return raw[len("No commits yet on "):].strip() or "HEAD"
+    if raw.startswith("Initial commit on "):
+        return raw[len("Initial commit on "):].strip() or "HEAD"
+    if raw.startswith("HEAD ("):
+        return "HEAD"
+    if "..." in raw:
+        raw = raw.split("...", 1)[0].strip()
+    return raw or "HEAD"
+
+
 def _collect_git_snapshot(project_root: Path) -> GitSnapshot:
-    inside = _run_git(project_root, ["rev-parse", "--is-inside-work-tree"])
-    if not inside or inside.strip().lower() != "true":
+    porcelain = _run_git(project_root, ["status", "--porcelain=v1", "-b", "-uall"])
+    if porcelain is None:
         return GitSnapshot(available=False)
 
-    branch = (_run_git(project_root, ["rev-parse", "--abbrev-ref", "HEAD"]) or "").strip()
-    porcelain = _run_git(project_root, ["status", "--porcelain=v1", "-uall"]) or ""
+    branch = "HEAD"
     changes: List[GitFileChange] = []
     for line in porcelain.splitlines():
+        if line.startswith("##"):
+            branch = _parse_porcelain_branch(line)
+            continue
         if len(line) < 4:
             continue
         code = line[:2]
@@ -408,16 +472,24 @@ def _collect_git_snapshot(project_root: Path) -> GitSnapshot:
             path_str = path_str.split(" -> ", 1)[1].strip()
         changes.append(GitFileChange(code=code, path=path_str))
 
-    diff_stat = (_run_git(project_root, ["diff", "--stat"]) or "").strip()
-    log_out = _run_git(project_root, ["log", "-n", "8", "--oneline"]) or ""
-    commits = [line.strip() for line in log_out.splitlines() if line.strip()]
+    head_sha = _read_git_head_sha(project_root)
+    cache_key = (str(project_root), head_sha)
+    if head_sha and cache_key in _GIT_LOG_CACHE:
+        commits = _GIT_LOG_CACHE[cache_key]
+    else:
+        log_out = _run_git(project_root, ["log", "-n", "8", "--oneline"]) or ""
+        commits = [line.strip() for line in log_out.splitlines() if line.strip()]
+        if head_sha:
+            if len(_GIT_LOG_CACHE) > 32:
+                _GIT_LOG_CACHE.clear()
+            _GIT_LOG_CACHE[cache_key] = commits
 
     return GitSnapshot(
         available=True,
-        branch=branch or "HEAD",
+        branch=branch,
         clean=len(changes) == 0,
         changes=changes,
-        diff_stat=diff_stat,
+        diff_stat="",
         recent_commits=commits,
     )
 
@@ -1119,6 +1191,27 @@ def _parse_claude_tokens(
     )
 
 
+def _estimate_turn_cost_usd(model: str, in_new: int, cache_read: int, out_tok: int) -> float:
+    """Estimate API-equivalent USD cost for one turn from `(model, input, cache_read, output)`."""
+    m = (model or "").lower()
+    ctx = in_new + cache_read
+    if "opus" in m:
+        in_r, cache_r, out_r = 15.0, 1.50, 75.0
+    elif "sonnet" in m:
+        in_r, cache_r, out_r = 3.0, 0.30, 15.0
+    elif "haiku" in m:
+        in_r, cache_r, out_r = 0.80, 0.08, 4.0
+    elif "flash-lite" in m or "flash_lite" in m:
+        in_r, cache_r, out_r = 0.10, 0.025, 0.40
+    elif "flash" in m:
+        in_r, cache_r, out_r = 0.30, 0.075, 2.50
+    elif ctx > 200_000:
+        in_r, cache_r, out_r = 2.50, 0.625, 15.0
+    else:
+        in_r, cache_r, out_r = 1.25, 0.31, 10.0
+    return (in_new * in_r + cache_read * cache_r + out_tok * out_r) / 1_000_000.0
+
+
 def _parse_antigravity_tokens(transcript: Path, session_id: str, title: str) -> Tuple[SessionTokenSummary, Dict[str, TokenConsumer]]:
     state, new_objs = _read_new_jsonl_lines(transcript, "antigravity")
     turns: Dict[str, Dict[str, Any]] = state["turns"]
@@ -1161,22 +1254,26 @@ def _parse_antigravity_tokens(transcript: Path, session_id: str, title: str) -> 
             for tc in (obj.get("tool_calls") or [])
             if isinstance(tc, dict) and tc.get("name")
         ]
+        model_name = str(obj.get("model") or "")
         turns[step_key] = {
             "in": in_new,
             "cache": cache_read,
             "out": out_tok,
             "think": 0,
             "tools": tcs,
+            "cost": _estimate_turn_cost_usd(model_name, in_new, cache_read, out_tok),
         }
         state["last_ctx"] = in_new + cache_read
 
+    est_cost = sum(float(t.get("cost") or 0.0) for t in turns.values())
     return _aggregate_turn_map(
         tool_name="antigravity",
         session_id=session_id,
         title=state.get("title") or title,
         turns=turns,
         last_ctx=state["last_ctx"],
-        cost_usd=0.0,
+        cost_usd=est_cost,
+        cost_estimated=est_cost > 0.0,
     )
 
 
@@ -1187,6 +1284,7 @@ def _aggregate_turn_map(
     turns: Dict[str, Dict[str, Any]],
     last_ctx: int,
     cost_usd: float,
+    cost_estimated: bool = False,
 ) -> Tuple[SessionTokenSummary, Dict[str, TokenConsumer]]:
     total_in = total_cache = total_out = total_think = 0
     tool_map: Dict[str, TokenConsumer] = {}
@@ -1232,6 +1330,7 @@ def _aggregate_turn_map(
         thinking_tokens=total_think,
         context_window_tokens=last_ctx,
         cost_usd=cost_usd,
+        cost_estimated=cost_estimated,
     )
     return sess_summary, tool_map
 
@@ -1319,6 +1418,7 @@ def _merge_token_summaries(
         thinking_tokens=total_think,
         context_window_tokens=latest_ctx,
         total_cost_usd=total_cost,
+        cost_estimated=any(s.cost_estimated for s in by_session),
         by_category=by_category,
         by_tool=by_tool,
         by_session=by_session,
@@ -1979,12 +2079,16 @@ def collect_telemetry(
     antigravity_home: Optional[Path] = None,
     prev_snapshot: Optional[TelemetrySnapshot] = None,
     include_slow: bool = True,
+    include_git: bool = True,
+    force_deps: bool = False,
 ) -> TelemetrySnapshot:
     """Collect a full read-only snapshot of `.aos/`, Git, and local AI sessions.
 
-    When ``include_slow`` is False and ``prev_snapshot`` is provided, expensive
-    harness checks (`doctor`, `missing_dependencies`, `native_status`) are reused
-    from ``prev_snapshot`` so high-frequency TUI polling stays lightweight.
+    When ``include_slow`` is False, expensive harness checks (`doctor`,
+    `missing_dependencies`, `native_status`) are reused from ``prev_snapshot``
+    (or deferred on fast first paint) so high-frequency TUI polling stays lightweight.
+    When ``include_git`` is False and ``prev_snapshot`` is provided, the previous
+    Git snapshot is reused to avoid spawning `git` when not viewing Git/Overview.
     """
     root = project_root.resolve()
     c_home = claude_home if claude_home is not None else (Path.home() / ".claude")
@@ -2007,42 +2111,28 @@ def collect_telemetry(
     ]
     lessons = list_recent_lessons(root, limit=15)
 
-    if include_slow or prev_snapshot is None:
-        status_report = build_report(root)
-        native_tools = native_status(root)
-        missing_deps = missing_dependencies(root)
+    if include_slow:
         doctor_findings = collect_findings(root)
+        status_report = build_report(root, findings=doctor_findings)
+        native_tools = native_status(root)
+        now_ts = time.time()
+        deps_key = str(root)
+        cached_deps = _DEPS_CACHE.get(deps_key)
+        if not force_deps and cached_deps is not None and (now_ts - cached_deps[0]) < _DEPS_CACHE_TTL_SECONDS:
+            missing_deps = list(cached_deps[1])
+        else:
+            missing_deps = missing_dependencies(root)
+            _DEPS_CACHE[deps_key] = (now_ts, list(missing_deps))
     else:
-        doctor_findings = prev_snapshot.doctor_findings
-        native_tools = prev_snapshot.native_tools
-        missing_deps = prev_snapshot.missing_deps
-        # Recompute lightweight plan/spec status while reusing cached doctor error count.
-        from .status import StatusReport, derive_state, read_plan
+        doctor_findings = prev_snapshot.doctor_findings if prev_snapshot is not None else []
+        native_tools = prev_snapshot.native_tools if prev_snapshot is not None else {}
+        missing_deps = prev_snapshot.missing_deps if prev_snapshot is not None else []
+        status_report = build_report(root, findings=doctor_findings)
 
-        plans = active_plan_files(root)
-        first_plan = read_plan(plans[0]) if plans else None
-        state, reason = derive_state(first_plan)
-        without_pair = [s for s in specs if not s.has_counterpart]
-        doc_errors = sum(1 for f in doctor_findings if f.level == "error")
-        extras: List[str] = []
-        if first_plan and first_plan.total:
-            extras.append(f"{first_plan.done}/{first_plan.total} fases completas")
-        if without_pair:
-            extras.append(f"{len(without_pair)} especificación(es) sin pareja")
-        extras.append(f"doctor: {doc_errors} error(es)")
-        status_report = StatusReport(
-            state=state,
-            reason=reason,
-            plan=first_plan,
-            other_plans=max(len(plans) - 1, 0),
-            open_specs=len(specs),
-            specs_without_pair=len(without_pair),
-            doctor_errors=doc_errors,
-            next_task=first_plan.next_task if first_plan else None,
-            extras=extras,
-        )
-
-    git_snap = _collect_git_snapshot(root)
+    if include_git or prev_snapshot is None:
+        git_snap = _collect_git_snapshot(root)
+    else:
+        git_snap = prev_snapshot.git
 
     token_acc: List[Tuple[SessionTokenSummary, Dict[str, TokenConsumer]]] = []
     sessions = _collect_claude_sessions(root, c_home, token_acc=token_acc) + _collect_antigravity_sessions(root, a_home, token_acc=token_acc)

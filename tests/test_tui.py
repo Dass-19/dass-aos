@@ -396,6 +396,124 @@ class TestAosTui(unittest.TestCase):
 
         asyncio.run(_exercise())
 
+    def test_agents_tab_filters_tasks_by_session_and_switches_views_and_voice_state(self):
+        from textual.widgets import Button, DataTable
+
+        from dass_aos.telemetry import AgentTaskInfo
+        from dass_aos.tui.app import AosTuiApp
+
+        async def _exercise():
+            app = AosTuiApp(
+                project_root=self.project_root,
+                interval=10.0,
+                claude_home=self.claude_home,
+                antigravity_home=self.agy_home,
+            )
+            async with app.run_test(size=(130, 42)) as pilot:
+                for _ in range(40):
+                    await pilot.pause(0.1)
+                    if app.snapshot is not None:
+                        break
+                await pilot.press("3")
+                await pilot.pause(0.15)
+
+                skey = app._selected_session_key
+                sess = app._sessions_by_key[skey]
+                t_mine = AgentTaskInfo(
+                    id="t-mine",
+                    agent=sess.tool,
+                    status="finished",
+                    title="My Session Task",
+                    session_id=sess.session_id,
+                    started_at=1700000000.0,
+                    updated_at=1700000030.0,
+                    tail_lines=["done mine"],
+                )
+                t_other = AgentTaskInfo(
+                    id="t-other",
+                    agent="claude-code",
+                    status="finished",
+                    title="Other Session Task",
+                    session_id="other-session-id-999",
+                    started_at=1700000000.0,
+                    updated_at=1700000020.0,
+                    tail_lines=["done other"],
+                )
+                app._all_tasks = [t_mine, t_other]
+                app._sync_tasks_table()
+                await pilot.pause(0.1)
+
+                # Default filter is by selected session
+                self.assertEqual(app._tasks_filter_mode, "session")
+                self.assertEqual(len(app._tasks_by_key), 1)
+                self.assertIn("t-mine", next(iter(app._tasks_by_key)))
+
+                # Switching filter to "all" shows both tasks
+                app._set_tasks_filter("all")
+                await pilot.pause(0.05)
+                self.assertEqual(len(app._tasks_by_key), 2)
+                self.assertTrue(app.query_one("#btn-tasks-filter-all", Button).has_class("-active"))
+
+                # Switching back to "session" filters again
+                app._set_tasks_filter("session")
+                await pilot.pause(0.05)
+                self.assertEqual(len(app._tasks_by_key), 1)
+
+                # View pills switch cleanly including Log view showing #agents-log-box
+                app._set_agent_right_mode("log")
+                await pilot.pause(0.05)
+                self.assertTrue(app.query_one("#agents-log-box").display)
+                self.assertFalse(app.query_one("#agents-activity-box").display)
+                self.assertTrue(app.query_one("#btn-view-log", Button).has_class("-active"))
+
+                # Voice button remains present and highlights when voice mode is toggled on
+                btn_voice = app.query_one("#btn-agent-voice", Button)
+                self.assertFalse(btn_voice.has_class("-voice-on"))
+                app.action_toggle_voice_mode()
+                await pilot.pause(0.05)
+                self.assertTrue(btn_voice.has_class("-voice-on"))
+                self.assertEqual(app.query_one("#agents-tasks-table", DataTable).row_count, 1)
+
+        asyncio.run(_exercise())
+
+    def test_attach_pty_validates_cli_installation_and_opens_install_modal_when_missing(self):
+        from unittest import mock
+
+        from dass_aos.tui.app import AosTuiApp, CliInstallScreen
+
+        async def _exercise():
+            app = AosTuiApp(
+                project_root=self.project_root,
+                interval=10.0,
+                claude_home=self.claude_home,
+                antigravity_home=self.agy_home,
+            )
+            async with app.run_test(size=(130, 40)) as pilot:
+                for _ in range(40):
+                    await pilot.pause(0.1)
+                    if app.snapshot is not None:
+                        break
+                await pilot.press("3")
+                await pilot.pause(0.15)
+                with mock.patch("shutil.which", return_value=None):
+                    info_ag = app.controller.check_cli_availability("antigravity")
+                    self.assertFalse(info_ag["installed"])
+                    self.assertIn("antigravity.google/cli/install", info_ag["install_display"])
+                    self.assertIn("inicia sesión", info_ag["login_hint"].lower())
+
+                    info_cc = app.controller.check_cli_availability("claude-code")
+                    self.assertFalse(info_cc["installed"])
+                    self.assertIn("claude.ai/install", info_cc["install_display"])
+
+                    app.action_attach_agent_pty()
+                    await pilot.pause(0.1)
+                    self.assertIsInstance(app.screen, CliInstallScreen)
+                    await pilot.press("escape")
+                    await pilot.pause(0.05)
+                    self.assertNotIsInstance(app.screen, CliInstallScreen)
+
+        asyncio.run(_exercise())
+
 
 @unittest.skipUnless(TEXTUAL_AVAILABLE, "optional `[tui]` dependency (textual) not installed")
 class TestTuiFormatters(unittest.TestCase):
@@ -408,6 +526,38 @@ class TestTuiFormatters(unittest.TestCase):
         assert "| A | B |\n|---|---|" in md  # header injected for a mid-table hunk
         assert "| **+** 2 | y |" in md
         assert "~~old~~" in md
+
+    def test_format_diff_lines_renders_gutter_inline_highlights_and_stats(self):
+        from dass_aos.tui.widgets import diff_stats, format_diff_lines, format_git_commit_line
+
+        sample = (
+            "diff --git a/.aos/config.json b/.aos/config.json\n"
+            "index 15f1228..85e3403 100644\n"
+            "--- a/.aos/config.json\n"
+            "+++ b/.aos/config.json\n"
+            "@@ -1,4 +1,4 @@\n"
+            " {\n"
+            '-  "aos_version": "0.8.0",\n'
+            '+  "aos_version": "0.9.0",\n'
+            '   "client_generator": "generic"\n'
+        )
+        self.assertEqual(diff_stats(sample), (1, 1, 1))
+        rendered = list(format_diff_lines(sample))
+        plains = [r.plain for r in rendered]
+        # Boilerplate headers stripped; clean hunk header and dual line numbers shown
+        self.assertFalse(any("diff --git" in p for p in plains))
+        self.assertTrue(any("Línea 1" in p for p in plains))
+        del_line = next(r for r in rendered if "0.8.0" in r.plain)
+        add_line = next(r for r in rendered if "0.9.0" in r.plain)
+        self.assertIn("2", del_line.plain)
+        self.assertIn("2", add_line.plain)
+        # Intra-line highlight span present on the changed character ("8" -> "9")
+        self.assertTrue(any("#5c1d24" in str(sp.style) for sp in del_line.spans))
+        self.assertTrue(any("#14533c" in str(sp.style) for sp in add_line.spans))
+
+        commit = format_git_commit_line("f11c441 feat(tui): add PTY")
+        self.assertIn("f11c441", commit.plain)
+        self.assertTrue(any("#d9b15f" in str(sp.style) for sp in commit.spans))
 
 
     def test_format_output_line_colors_plain_output_and_keeps_ansi(self):
