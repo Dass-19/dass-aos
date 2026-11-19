@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 599 140" width="599" height="140" role="img" aria-label="DASS-AOS">
+  <defs>
+    <style>
+      .bar { transform-box: fill-box; transform-origin: left center; }
+      .bar-0 { animation: barPulse 4.4s ease-in-out infinite 0.00s; }
+      .bar-1 { animation: barPulse 4.4s ease-in-out infinite 0.28s; }
+      .bar-2 { animation: barPulse 4.4s ease-in-out infinite 0.56s; }
+      .bar-3 { animation: barPulse 4.4s ease-in-out infinite 0.84s; }
+      @keyframes barPulse {
+        0%, 100% { filter: brightness(1.0); opacity: 0.92; }
+        18%      { filter: brightness(1.42); opacity: 1.0; }
+        40%      { filter: brightness(1.0); opacity: 0.92; }
+      }
+      .sheen { animation: sweep 5.2s ease-in-out infinite; }
+      @keyframes sweep {
+        0%, 60%  { transform: translateX(-180px); opacity: 0; }
+        72%      { opacity: 0.24; }
+        92%      { transform: translateX(680px); opacity: 0; }
+        100%     { transform: translateX(680px); opacity: 0; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .bar-0, .bar-1, .bar-2, .bar-3, .sheen { animation: none; }
+      }
+    </style>
+    <clipPath id="emblem-clip"><polygon points="77,10 577,10 517,130 17,130"/></clipPath>
+    <linearGradient id="sheen-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#ffffff" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <polygon points="77,10 577,10 517,130 17,130" fill="#0b111a"/>
+  <g class="bar bar-0" fill="#b89146">
+    <rect x="77" y="30" width="80" height="10" rx="1"/>
+    <rect x="72" y="40" width="80" height="9" rx="1"/>
+  </g>
+  <g class="bar bar-1" fill="#537195">
+    <rect x="67" y="50" width="80" height="10" rx="1"/>
+    <rect x="62" y="60" width="80" height="9" rx="1"/>
+  </g>
+  <g class="bar bar-2" fill="#844747">
+    <rect x="57" y="70" width="80" height="10" rx="1"/>
+    <rect x="52" y="80" width="80" height="9" rx="1"/>
+  </g>
+  <g class="bar bar-3" fill="#5b635d">
+    <rect x="47" y="90" width="80" height="10" rx="1"/>
+    <rect x="42" y="100" width="80" height="9" rx="1"/>
+  </g>
+  <g fill="#f8fafc">
+    <rect x="77" y="10" width="500" height="10"/>
+    <rect x="62" y="20" width="10" height="10"/>
+    <rect x="572" y="20" width="10" height="10"/>
+    <rect x="57" y="30" width="10" height="10"/>
+    <rect x="167" y="30" width="80" height="10"/>
+    <rect x="287" y="30" width="50" height="10"/>
+    <rect x="377" y="30" width="80" height="10"/>
+    <rect x="477" y="30" width="80" height="10"/>
+    <rect x="567" y="30" width="10" height="10"/>
+    <rect x="52" y="40" width="10" height="10"/>
+    <rect x="162" y="40" width="90" height="10"/>
+    <rect x="272" y="40" width="70" height="10"/>
+    <rect x="362" y="40" width="90" height="10"/>
+    <rect x="462" y="40" width="90" height="10"/>
+    <rect x="562" y="40" width="10" height="10"/>
+    <rect x="47" y="50" width="10" height="10"/>
+    <rect x="157" y="50" width="30" height="10"/>
+    <rect x="217" y="50" width="30" height="10"/>
+    <rect x="257" y="50" width="30" height="10"/>
+    <rect x="317" y="50" width="30" height="10"/>
+    <rect x="357" y="50" width="30" height="10"/>
+    <rect x="457" y="50" width="30" height="10"/>
+    <rect x="557" y="50" width="10" height="10"/>
+    <rect x="42" y="60" width="10" height="10"/>
+    <rect x="152" y="60" width="30" height="10"/>
+    <rect x="212" y="60" width="30" height="10"/>
+    <rect x="252" y="60" width="30" height="10"/>
+    <rect x="312" y="60" width="30" height="10"/>
+    <rect x="352" y="60" width="80" height="10"/>
+    <rect x="452" y="60" width="80" height="10"/>
+    <rect x="552" y="60" width="10" height="10"/>
+    <rect x="37" y="70" width="10" height="10"/>
+    <rect x="147" y="70" width="30" height="10"/>
+    <rect x="207" y="70" width="30" height="10"/>
+    <rect x="247" y="70" width="90" height="10"/>
+    <rect x="357" y="70" width="80" height="10"/>
+    <rect x="457" y="70" width="80" height="10"/>
+    <rect x="547" y="70" width="10" height="10"/>
+    <rect x="32" y="80" width="10" height="10"/>
+    <rect x="142" y="80" width="30" height="10"/>
+    <rect x="202" y="80" width="30" height="10"/>
+    <rect x="242" y="80" width="90" height="10"/>
+    <rect x="402" y="80" width="30" height="10"/>
+    <rect x="502" y="80" width="30" height="10"/>
+    <rect x="542" y="80" width="10" height="10"/>
+    <rect x="27" y="90" width="10" height="10"/>
+    <rect x="137" y="90" width="90" height="10"/>
+    <rect x="237" y="90" width="30" height="10"/>
+    <rect x="297" y="90" width="30" height="10"/>
+    <rect x="337" y="90" width="90" height="10"/>
+    <rect x="437" y="90" width="90" height="10"/>
+    <rect x="537" y="90" width="10" height="10"/>
+    <rect x="22" y="100" width="10" height="10"/>
+    <rect x="132" y="100" width="80" height="10"/>
+    <rect x="232" y="100" width="30" height="10"/>
+    <rect x="292" y="100" width="30" height="10"/>
+    <rect x="332" y="100" width="80" height="10"/>
+    <rect x="432" y="100" width="80" height="10"/>
+    <rect x="532" y="100" width="10" height="10"/>
+    <rect x="17" y="110" width="10" height="10"/>
+    <rect x="527" y="110" width="10" height="10"/>
+    <rect x="22" y="120" width="500" height="10"/>
+  </g>
+  <g clip-path="url(#emblem-clip)">
+    <polygon class="sheen" points="60,0 130,0 75,140 5,140" fill="url(#sheen-grad)"/>
+  </g>
+</svg>
