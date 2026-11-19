@@ -6,6 +6,7 @@ delegation with automatic OS TTS spoken responses).
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -15,8 +16,9 @@ import sys
 import threading
 import time
 import uuid
+from collections import deque
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Deque, Dict, List, Optional, Sequence, Set, Tuple
 
 from ..telemetry import AgentSessionInfo
 from .pty_terminal import PtySession, detect_terminal_agent_state
@@ -51,63 +53,303 @@ def clean_speech_text(raw: str, max_chars: int = 700) -> str:
     return joined
 
 
-class TTSManager:
-    """Zero-dependency OS speech synthesizer that speaks agent responses when `/voice` is active."""
+DEFAULT_TTS_VOICE = "es-CO-SalomeNeural"
+DEFAULT_TTS_RATE = "+25%"
 
-    def __init__(self) -> None:
+_VOICE_ALIASES: Dict[str, str] = {
+    "salome": "es-CO-SalomeNeural",
+    "salomé": "es-CO-SalomeNeural",
+    "gonzalo": "es-CO-GonzaloNeural",
+}
+
+_EDGE_TTS_PLAY_SCRIPT = r"""
+import asyncio, ctypes, os, shutil, subprocess, sys, tempfile
+
+def _fallback_os_tts(text: str, voice: str, sapi_rate: int) -> None:
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env["AOS_TTS_TEXT"] = text
+    env["AOS_TTS_VOICE"] = voice
+    env["AOS_TTS_SAPI_RATE"] = str(sapi_rate)
+    if sys.platform == "win32":
+        ps_cmd = (
+            "Add-Type -AssemblyName System.Speech; "
+            "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+            "$s.Rate = [int]$env:AOS_TTS_SAPI_RATE; "
+            "$v = $s.GetInstalledVoices() | Where-Object { $_.VoiceInfo.Name -like ('*' + $env:AOS_TTS_VOICE + '*') } | Select-Object -First 1; "
+            "if ($v) { $s.SelectVoice($v.VoiceInfo.Name) }; "
+            "$s.Speak($env:AOS_TTS_TEXT)"
+        )
+        subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_cmd], env=env, check=False)
+    elif sys.platform == "darwin":
+        subprocess.run(["say", "-r", str(max(120, min(320, 175 + sapi_rate * 22))), "--", text], env=env, check=False)
+    else:
+        subprocess.run(["spd-say", "-r", str(max(-100, min(100, sapi_rate * 12))), "--", text], env=env, check=False)
+
+def _play_mp3(path: str) -> bool:
+    if sys.platform == "win32":
+        winmm = ctypes.windll.winmm
+        alias = f"aos_tts_{os.getpid()}"
+        buf = ctypes.create_unicode_buffer(256)
+        rc = winmm.mciSendStringW(f'open "{path}" type mpegvideo alias {alias}', buf, 256, 0)
+        if rc != 0:
+            return False
+        try:
+            rc = winmm.mciSendStringW(f"play {alias} wait", buf, 256, 0)
+            return rc == 0
+        finally:
+            winmm.mciSendStringW(f"close {alias}", buf, 256, 0)
+    if sys.platform == "darwin" and shutil.which("afplay"):
+        return subprocess.run(["afplay", path], check=False).returncode == 0
+    for player, args in (("ffplay", ["-nodisp", "-autoexit", "-loglevel", "quiet", path]), ("mpg123", ["-q", path])):
+        if shutil.which(player):
+            return subprocess.run([player, *args], check=False).returncode == 0
+    return False
+
+text = os.environ.get("AOS_TTS_TEXT", "")
+voice = os.environ.get("AOS_TTS_VOICE", "es-CO-SalomeNeural")
+rate = os.environ.get("AOS_TTS_RATE", "+25%")
+sapi_rate = int(os.environ.get("AOS_TTS_SAPI_RATE", "2"))
+if not text.strip():
+    sys.exit(0)
+
+tmp_path = None
+try:
+    import edge_tts
+    fd, tmp_path = tempfile.mkstemp(prefix="aos_tts_", suffix=".mp3")
+    os.close(fd)
+    asyncio.run(edge_tts.Communicate(text, voice=voice, rate=rate).save(tmp_path))
+    if not os.path.isfile(tmp_path) or os.path.getsize(tmp_path) < 128 or not _play_mp3(tmp_path):
+        _fallback_os_tts(text, voice, sapi_rate)
+except Exception:
+    _fallback_os_tts(text, voice, sapi_rate)
+finally:
+    if tmp_path and os.path.exists(tmp_path):
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+""".strip()
+
+
+def normalize_tts_voice(raw: Optional[str]) -> str:
+    """Resolve friendly voice aliases (e.g. `Salome`) to Edge neural voice IDs."""
+    text = (raw or "").strip()
+    if not text:
+        return DEFAULT_TTS_VOICE
+    return _VOICE_ALIASES.get(text.lower(), text)
+
+
+def normalize_tts_rate(raw: Optional[str]) -> str:
+    """Normalize speed strings (`+25%`, `0.25+`, `+0.25`, `-10%`) to Edge TTS rate syntax."""
+    text = (raw or "").strip()
+    if not text:
+        return DEFAULT_TTS_RATE
+    if re.fullmatch(r"[+-]?\d+%", text):
+        return text if text[0] in "+-" else f"+{text}"
+    m_trail = re.fullmatch(r"(\d+(?:\.\d+)?)([+-])", text)
+    if m_trail:
+        val = float(m_trail.group(1))
+        sign = m_trail.group(2)
+        pct = int(round(val * 100)) if val <= 3.0 else int(round(val))
+        return f"{sign}{pct}%"
+    try:
+        val = float(text)
+    except ValueError:
+        return DEFAULT_TTS_RATE
+    pct = int(round(val * 100)) if abs(val) <= 3.0 else int(round(val))
+    return f"{pct:+d}%"
+
+
+def _rate_to_sapi5(rate: str) -> int:
+    """Convert percentage rate (e.g. `+25%`) to Windows SAPI5 SpeechSynthesizer.Rate (-10..10)."""
+    m = re.fullmatch(r"([+-]?\d+)%", (rate or "").strip())
+    if not m:
+        return 2
+    pct = int(m.group(1))
+    # ~12.5% per SAPI5 step (+25% -> +2)
+    return max(-10, min(10, int(round(pct / 12.5))))
+
+
+class TTSManager:
+    """OS/Edge-TTS speech synthesizer with FIFO queue so agent responses play in order (`CA-6`)."""
+
+    def __init__(self, voice: Optional[str] = None, rate: Optional[str] = None) -> None:
+        self._lock = threading.Lock()
         self._proc: Optional[subprocess.Popen] = None
+        self._queue: Deque[str] = deque()
         self.last_spoken: str = ""
+        self._current_text: str = ""
+        self.voice: str = normalize_tts_voice(voice if voice is not None else os.environ.get("AOS_TTS_VOICE"))
+        self.rate: str = normalize_tts_rate(rate if rate is not None else os.environ.get("AOS_TTS_RATE"))
+
+    @property
+    def queue_size(self) -> int:
+        with self._lock:
+            return len(self._queue)
 
     @property
     def is_speaking(self) -> bool:
-        return self._proc is not None and self._proc.poll() is None
+        with self._lock:
+            if self._proc is not None and self._proc.poll() is None:
+                return True
+            return bool(self._queue)
+
+    def poll(self) -> bool:
+        """Advance FIFO queue if current utterance finished; return True while speaking."""
+        with self._lock:
+            if self._proc is not None and self._proc.poll() is not None:
+                self._proc = None
+                self._current_text = ""
+            if self._proc is None and self._queue:
+                self._start_next_locked()
+            return (self._proc is not None and self._proc.poll() is None) or bool(self._queue)
 
     def stop(self) -> bool:
-        """Immediately stop any active speech output (`Esc` or new turn)."""
-        proc = self._proc
-        self._proc = None
+        """Immediately stop any active speech output and clear queued responses (`Esc`, `m`, `Stop`)."""
+        with self._lock:
+            had_queued = bool(self._queue)
+            self._queue.clear()
+            proc = self._proc
+            self._proc = None
+            self._current_text = ""
+        stopped = False
         if proc is not None and proc.poll() is None:
             try:
                 proc.terminate()
-                return True
+                stopped = True
             except OSError:
                 pass
-        return False
+        return stopped or had_queued
 
-    def speak(self, raw_text: str) -> bool:
-        """Synthesize conversational text asynchronously using the host OS TTS engine."""
-        cleaned = clean_speech_text(raw_text)
-        if not cleaned:
-            return False
-        self.stop()
-        self.last_spoken = cleaned
+    @staticmethod
+    def _has_edge_tts() -> bool:
+        return importlib.util.find_spec("edge_tts") is not None
 
+    @classmethod
+    def _build_tts_command(
+        cls,
+        cleaned: str,
+        voice: str = DEFAULT_TTS_VOICE,
+        rate: str = DEFAULT_TTS_RATE,
+    ) -> Tuple[List[str], Dict[str, str]]:
+        norm_voice = normalize_tts_voice(voice)
+        norm_rate = normalize_tts_rate(rate)
+        sapi_rate = _rate_to_sapi5(norm_rate)
         env = os.environ.copy()
         env["PYTHONUTF8"] = "1"
         env["AOS_TTS_TEXT"] = cleaned
-
+        env["AOS_TTS_VOICE"] = norm_voice
+        env["AOS_TTS_RATE"] = norm_rate
+        env["AOS_TTS_SAPI_RATE"] = str(sapi_rate)
+        if cls._has_edge_tts():
+            return [sys.executable, "-c", _EDGE_TTS_PLAY_SCRIPT], env
         if sys.platform == "win32":
             ps_cmd = (
                 "Add-Type -AssemblyName System.Speech; "
                 "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                "$s.Rate = [int]$env:AOS_TTS_SAPI_RATE; "
+                "$v = $s.GetInstalledVoices() | Where-Object { $_.VoiceInfo.Name -like ('*' + $env:AOS_TTS_VOICE + '*') } | Select-Object -First 1; "
+                "if ($v) { $s.SelectVoice($v.VoiceInfo.Name) }; "
                 "$s.Speak($env:AOS_TTS_TEXT)"
             )
             cmd = ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_cmd]
         elif sys.platform == "darwin":
-            cmd = ["say", "--", cleaned]
+            wpm = max(120, min(320, 175 + sapi_rate * 22))
+            cmd = ["say", "-r", str(wpm), "--", cleaned]
         else:
-            cmd = ["spd-say", "--", cleaned]
+            spd_rate = max(-100, min(100, sapi_rate * 12))
+            cmd = ["spd-say", "-r", str(spd_rate), "--", cleaned]
+        return cmd, env
 
+    def _spawn_process(self, cleaned: str) -> Optional[subprocess.Popen]:
+        cmd, env = self._build_tts_command(cleaned, voice=self.voice, rate=self.rate)
         try:
-            self._proc = subprocess.Popen(
+            return subprocess.Popen(
                 cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 env=env,
             )
-            return True
         except OSError:
-            self._proc = None
+            return None
+
+    def _watch_process(self, proc: subprocess.Popen) -> None:
+        try:
+            proc.wait()
+        except Exception:
+            pass
+        with self._lock:
+            if self._proc is proc:
+                self._proc = None
+                self._current_text = ""
+                if self._queue:
+                    self._start_next_locked()
+
+    def _start_next_locked(self) -> bool:
+        while self._queue:
+            nxt = self._queue.popleft()
+            proc = self._spawn_process(nxt)
+            if proc is None:
+                continue
+            self._proc = proc
+            self._current_text = nxt
+            self.last_spoken = nxt
+            threading.Thread(target=self._watch_process, args=(proc,), daemon=True).start()
+            return True
+        return False
+
+    def speak(self, raw_text: str, *, interrupt: bool = False) -> bool:
+        """Queue conversational text in FIFO order for OS TTS synthesis (or interrupt if requested)."""
+        cleaned = clean_speech_text(raw_text)
+        if not cleaned:
+            return False
+        if interrupt:
+            self.stop()
+        with self._lock:
+            if self._proc is not None and self._proc.poll() is not None:
+                self._proc = None
+                self._current_text = ""
+            # Avoid duplicate consecutive utterances
+            if cleaned == self._current_text or (self._queue and self._queue[-1] == cleaned):
+                return True
+            self._queue.append(cleaned)
+            if self._proc is None:
+                return self._start_next_locked()
+            return True
+
+    def synthesize_to_wav(self, raw_text: str, output_path: Path) -> bool:
+        """Synthesize cleaned speech text to a WAV audio file (useful for offline audio verification)."""
+        cleaned = clean_speech_text(raw_text)
+        if not cleaned:
+            return False
+        out = output_path.resolve()
+        out.parent.mkdir(parents=True, exist_ok=True)
+        env = os.environ.copy()
+        env["PYTHONUTF8"] = "1"
+        env["AOS_TTS_TEXT"] = cleaned
+        env["AOS_TTS_WAV"] = str(out)
+        env["AOS_TTS_VOICE"] = self.voice
+        env["AOS_TTS_RATE"] = self.rate
+        env["AOS_TTS_SAPI_RATE"] = str(_rate_to_sapi5(self.rate))
+        if sys.platform == "win32":
+            ps_cmd = (
+                "Add-Type -AssemblyName System.Speech; "
+                "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                "$s.Rate = [int]$env:AOS_TTS_SAPI_RATE; "
+                "$s.SetOutputToWaveFile($env:AOS_TTS_WAV); "
+                "$s.Speak($env:AOS_TTS_TEXT); "
+                "$s.Dispose()"
+            )
+            cmd = ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_cmd]
+        elif sys.platform == "darwin":
+            cmd = ["say", "-o", str(out), "--data-format=LEI16@22050", "--", cleaned]
+        else:
+            return False
+        try:
+            res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env, timeout=20)
+            return res.returncode == 0 and out.is_file() and out.stat().st_size > 44
+        except (OSError, subprocess.SubprocessError):
             return False
 
 
@@ -223,7 +465,9 @@ class SessionController:
             else (Path.home() / ".gemini" / "antigravity-cli")
         )
         self.voice_sessions: Set[str] = set()
+        self._voice_opted_out: Set[str] = set()
         self._spoken_by_session: Dict[str, str] = {}
+        self._last_telemetry_voice: Dict[str, bool] = {}
         self.active_proc: Optional[subprocess.Popen] = None
         self.active_session_key: Optional[str] = None
         self.named_sessions: Dict[str, AgentSessionInfo] = {}
@@ -233,6 +477,11 @@ class SessionController:
     def has_agy_cli_db(self, session_id: str) -> bool:
         """Return True if `session_id` exists in the `antigravity-cli` local store."""
         return (self.antigravity_cli_home / "conversations" / f"{session_id}.db").is_file()
+
+    def is_agy_ide_session_open_in_ide(self, session_id: str) -> bool:
+        """Return True if the IDE session currently has an active SQLite WAL file open in Antigravity 2.0."""
+        ide_home = self.antigravity_cli_home.parent / "antigravity"
+        return (ide_home / "conversations" / f"{session_id}.db-wal").is_file()
 
     def needs_agy_ide_import(self, sess: AgentSessionInfo) -> bool:
         """Return True if an `antigravity` IDE session is not yet in `antigravity-cli`."""
@@ -398,11 +647,18 @@ class SessionController:
             # Multiple similar candidates: keep filtered list open for user disambiguation
             return
 
-        # 5. Select row and confirm native `[Import this conversation? (y/n)]` fork-import
+        # 5. Select row and confirm native `[Import this conversation? (y/n)]` fork-import,
+        # unless the IDE session currently has an active WAL open in Antigravity 2.0 (parallel collision guard).
         pty_sess.write("\r", mark_user=False)
         if _wait_for(lambda txt: "import this conversation" in txt.lower(), timeout=3.0):
             if pty_sess.alive and not pty_sess.user_interacted:
-                pty_sess.write("y", mark_user=False)
+                if self.is_agy_ide_session_open_in_ide(sess.session_id):
+                    pty_sess.screen.feed(
+                        "\r\n\x1b[1;33m⚠ Sesión abierta en Antigravity 2.0 (WAL activo): "
+                        "auto-import pausado para evitar colisión en paralelo. Pulsa 'y' o 'n'.\x1b[0m\r\n"
+                    )
+                else:
+                    pty_sess.write("y", mark_user=False)
 
     def open_or_attach_pty(
         self,
@@ -482,18 +738,24 @@ class SessionController:
         return any_changed
 
     def enable_voice(self, session_key: str) -> None:
+        self._voice_opted_out.discard(session_key)
         self.voice_sessions.add(session_key)
 
-    def toggle_voice(self, session_key: str) -> bool:
-        if session_key in self.voice_sessions:
-            self.voice_sessions.remove(session_key)
+    def toggle_voice(self, session_key: str, *, currently_active: Optional[bool] = None) -> bool:
+        was_on = currently_active if currently_active is not None else (session_key in self.voice_sessions)
+        if was_on:
+            self.voice_sessions.discard(session_key)
+            self._voice_opted_out.add(session_key)
             self.tts.stop()
             return False
+        self._voice_opted_out.discard(session_key)
         self.voice_sessions.add(session_key)
         return True
 
-    def is_voice_enabled(self, session_key: str) -> bool:
-        return session_key in self.voice_sessions
+    def is_voice_enabled(self, session_key: str, *, telemetry_voice_active: bool = False) -> bool:
+        if session_key in self._voice_opted_out:
+            return False
+        return (session_key in self.voice_sessions) or telemetry_voice_active
 
     def create_named_session(self, name: str, tool: str = "claude-code") -> AgentSessionInfo:
         """Create a new tracked session with a Herdr-style slug name."""
@@ -601,12 +863,19 @@ class SessionController:
         return display, assistant_text
 
     def sync_voice_sessions(self, sessions: Sequence[AgentSessionInfo]) -> Optional[str]:
-        """Speak the latest assistant response for any session with `/voice` active (`CA-6`)."""
+        """Enqueue latest assistant responses in FIFO order for all sessions with `/voice` active (`CA-6`)."""
+        last_enqueued: Optional[str] = None
         for sess in sessions:
             key = f"{sess.tool}:{sess.session_id}"
-            if sess.voice_active:
+            # A `/voice` typed straight in the CLI overrides the button's last choice.
+            if self._last_telemetry_voice.get(key) not in (None, sess.voice_active):
+                self._voice_opted_out.discard(key)
+                if not sess.voice_active:
+                    self.voice_sessions.discard(key)
+            self._last_telemetry_voice[key] = sess.voice_active
+            if sess.voice_active and key not in self._voice_opted_out:
                 self.voice_sessions.add(key)
-            if key not in self.voice_sessions:
+            if key not in self.voice_sessions or key in self._voice_opted_out:
                 continue
             text = (sess.last_assistant_text or sess.pending_reason or "").strip()
             if not text:
@@ -615,8 +884,8 @@ class SessionController:
                 continue
             self._spoken_by_session[key] = text
             if self.tts.speak(text):
-                return text
-        return None
+                last_enqueued = text
+        return last_enqueued
 
     def stop_active_process(self, session_key: Optional[str] = None) -> bool:
         """Terminate the currently running managed session subprocess or PTY (`k`)."""

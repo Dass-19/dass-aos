@@ -832,4 +832,93 @@ class TestTelemetry(unittest.TestCase):
         self.assertEqual(by_id[cli_id].summary_title, "CLI Session Title")
         self.assertIn("agy-cli", by_id[cli_id].meta)
 
+    def test_recovers_evicted_ide_session_and_non_empty_cli_forks_without_cross_project_leak(self):
+        import sqlite3
+        from dass_aos.telemetry import collect_telemetry
+
+        gemini_root = self.temp_dir / "gemini_evicted"
+        ide_home = gemini_root / "antigravity"
+        cli_home = gemini_root / "antigravity-cli"
+        evicted_id = "evicted-ide-1111"
+        other_proj_id = "other-proj-2222"
+        cli_fork_id = "cli-fork-3333"
+        empty_stub_id = "cli-empty-4444"
+
+        # 1. Evicted IDE session: missing from conversation_summaries.db, but brain/transcript matches project_root
+        ev_logs = ide_home / "brain" / evicted_id / ".system_generated" / "logs"
+        ev_logs.mkdir(parents=True)
+        (ide_home / "conversations").mkdir(parents=True)
+        (ide_home / "conversations" / f"{evicted_id}.db").write_bytes(b"SQLite format 3\x00")
+        (ev_logs / "transcript.jsonl").write_text(
+            json.dumps({
+                "step_index": 0,
+                "type": "USER_INPUT",
+                "status": "DONE",
+                "content": f"Revisar {self.project_root.resolve()}",
+            }) + "\n",
+            encoding="utf-8",
+        )
+
+        # 2. Session indexed under a DIFFERENT workspace (even if transcript mentions project_root, MUST NOT leak)
+        ot_logs = ide_home / "brain" / other_proj_id / ".system_generated" / "logs"
+        ot_logs.mkdir(parents=True)
+        (ot_logs / "transcript.jsonl").write_text(
+            json.dumps({
+                "step_index": 0,
+                "type": "USER_INPUT",
+                "status": "DONE",
+                "content": f"Mentioning {self.project_root.resolve()} from another repo",
+            }) + "\n",
+            encoding="utf-8",
+        )
+
+        # 3. CLI fork with empty title + no transcript.jsonl yet, but step_count=184 and preview in summaries DB
+        (cli_home / "brain" / cli_fork_id).mkdir(parents=True)
+        (cli_home / "brain" / empty_stub_id).mkdir(parents=True)
+        (cli_home / "conversations").mkdir(parents=True)
+        (cli_home / "conversations" / f"{cli_fork_id}.db").write_bytes(b"SQLite format 3\x00")
+        (cli_home / "conversations" / f"{empty_stub_id}.db").write_bytes(b"SQLite format 3\x00")
+
+        ide_db = ide_home / "conversation_summaries.db"
+        con = sqlite3.connect(str(ide_db))
+        con.execute(
+            "CREATE TABLE conversation_summaries "
+            "(conversation_id TEXT, title TEXT, workspace_uris TEXT, app_data_dir TEXT, step_count INT, preview TEXT)"
+        )
+        other_uri = (self.temp_dir / "other_repo").resolve().as_uri()
+        con.execute(
+            "INSERT INTO conversation_summaries VALUES (?, ?, ?, ?, ?, ?)",
+            (other_proj_id, "Other Repo", json.dumps([other_uri]), "antigravity", 10, "other"),
+        )
+        con.commit()
+        con.close()
+
+        cli_db = cli_home / "conversation_summaries.db"
+        con2 = sqlite3.connect(str(cli_db))
+        con2.execute(
+            "CREATE TABLE conversation_summaries "
+            "(conversation_id TEXT, title TEXT, workspace_uris TEXT, app_data_dir TEXT, step_count INT, preview TEXT)"
+        )
+        ws_uri = self.project_root.resolve().as_uri()
+        con2.execute(
+            "INSERT INTO conversation_summaries VALUES (?, ?, ?, ?, ?, ?)",
+            (cli_fork_id, "", json.dumps([ws_uri]), "antigravity-cli", 184, "Sesion fork CLI real"),
+        )
+        con2.execute(
+            "INSERT INTO conversation_summaries VALUES (?, ?, ?, ?, ?, ?)",
+            (empty_stub_id, "", json.dumps([ws_uri]), "antigravity-cli", 0, ""),
+        )
+        con2.commit()
+        con2.close()
+
+        snap = collect_telemetry(self.project_root, claude_home=self.claude_home, antigravity_home=ide_home)
+        by_id = {s.session_id: s for s in snap.sessions if s.tool == "antigravity"}
+        self.assertIn(evicted_id, by_id)
+        self.assertIn("agy-ide", by_id[evicted_id].meta)
+        self.assertIn(cli_fork_id, by_id)
+        self.assertEqual(by_id[cli_fork_id].title, "Sesion fork CLI real")
+        self.assertNotIn(other_proj_id, by_id)
+        self.assertNotIn(empty_stub_id, by_id)
+
+
 

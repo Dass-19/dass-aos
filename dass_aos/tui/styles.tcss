@@ -538,6 +538,10 @@ Screen.theme-violet Tab.-active {
     color: #e2efff;
 }
 
+#btn-agent-zoom {
+    margin-right: 1;
+}
+
 #agents-activity-box {
     height: 1fr;
     margin-bottom: 1;
@@ -622,6 +626,8 @@ Screen.theme-violet Tab.-active {
 #agent-composer-row #btn-agent-voice:focus { background: #060b11; border: heavy #34d399; color: #d1fae5; }
 #agent-composer-row #btn-agent-voice.-voice-on { background: #060b11; border: heavy #34d399; color: #34d399; }
 #agent-composer-row #btn-agent-voice.-voice-on:hover { background: #060b11; border: heavy #6ee7b7; color: #6ee7b7; }
+#agent-composer-row #btn-agent-voice.-voice-speaking { background: #0b1a16; border: heavy $gold-l; color: #fde68a; }
+#agent-composer-row #btn-agent-voice.-voice-speaking:hover { background: #0f241e; border: heavy #fef3c7; color: #fef3c7; }
 
 #agent-composer-row #btn-agent-stop { border: round $terra; color: $terra-l; margin-right: 0; }
 #agent-composer-row #btn-agent-stop:hover { background: #060b11; border: round #f87171; color: #fecaca; }

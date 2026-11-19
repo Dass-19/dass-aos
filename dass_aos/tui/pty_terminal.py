@@ -18,10 +18,12 @@ import re
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
+from rich.cells import cell_len
 from rich.text import Text
 
 try:
@@ -98,6 +100,7 @@ _ESC_TOKEN_RE = re.compile(
     r"|\x1b\[([\x30-\x3f]*)([\x20-\x2f]*)([\x40-\x7e])"     # Group 2, 3, 4: ECMA-48 CSI params, intermediates, final
     r"|\x1b([78cDEHMNOZ><=])"                               # Group 5: single-char ESC
     r"|\x1b[\(\)\*\+][0AB]"                                 # Charset designation (ignore)
+    r"|\x1b[P_\^X][^\x1b]*\x1b\\"                           # DCS / APC / PM / SOS string sequences (ignore)
 )
 
 
@@ -115,6 +118,8 @@ class VtScreen:
         self.cursor_row = 0
         self.cursor_col = 0
         self._saved_cursor = (0, 0)
+        self._alt_saved_cursor = (0, 0)
+        self._last_graphic_char = ""
         self.scroll_top = 0
         self.scroll_bottom = self.rows - 1
         self.cursor_visible = True
@@ -177,6 +182,8 @@ class VtScreen:
         self.scroll_bottom = self.rows - 1
         self.cursor_row = max(0, min(self.rows - 1, self.cursor_row - src_start))
         self.cursor_col = min(self.cols - 1, self.cursor_col)
+        sr, sc = self._saved_cursor
+        self._saved_cursor = (max(0, min(self.rows - 1, sr - src_start)), min(self.cols - 1, sc))
         self.scroll_offset = min(self.scroll_offset, len(self.scrollback))
         self.version += 1
 
@@ -261,7 +268,13 @@ class VtScreen:
             elif ch == "\x07":
                 continue
             elif ord(ch) >= 32:
-                if self.cursor_col >= self.cols:
+                w = cell_len(ch)
+                if w <= 0:
+                    continue
+                if w == 2 and self.cursor_col + 2 > self.cols:
+                    self.cursor_col = 0
+                    self._linefeed()
+                elif self.cursor_col >= self.cols:
                     self.cursor_col = 0
                     self._linefeed()
                 st = self._cur_style
@@ -274,7 +287,19 @@ class VtScreen:
                     underline=st.underline,
                     reverse=st.reverse,
                 )
+                self._last_graphic_char = ch
                 self.cursor_col += 1
+                if w == 2 and self.cursor_col < self.cols:
+                    self.grid[self.cursor_row][self.cursor_col] = VtCell(
+                        char="",
+                        fg=st.fg,
+                        bg=st.bg,
+                        bold=st.bold,
+                        dim=st.dim,
+                        underline=st.underline,
+                        reverse=st.reverse,
+                    )
+                    self.cursor_col += 1
 
     def _handle_osc(self, osc: str) -> None:
         code, _, payload = osc.partition(";")
@@ -290,7 +315,9 @@ class VtScreen:
         if ch == "7":
             self._saved_cursor = (self.cursor_row, self.cursor_col)
         elif ch == "8":
-            self.cursor_row, self.cursor_col = self._saved_cursor
+            sr, sc = self._saved_cursor
+            self.cursor_row = max(0, min(self.rows - 1, sr))
+            self.cursor_col = max(0, min(self.cols - 1, sc))
         elif ch == "M":
             if self.cursor_row == self.scroll_top:
                 self._scroll_down(1, self.scroll_top, self.scroll_bottom)
@@ -309,11 +336,13 @@ class VtScreen:
             self._cur_style = VtCell()
 
     def _handle_csi(self, params: str, inter: str, final: str) -> None:
-        # Ignore sequences with intermediate bytes such as DECSCUSR `\x1b[2 q` or DECSTR `\x1b[!p`
-        if inter:
+        # Ignore sequences with intermediate bytes (e.g. DECSCUSR `\x1b[2 q`, DECSTR `\x1b[!p`)
+        # or non-DEC private prefixes `<`, `=`, `>` (e.g. Kitty keyboard `\x1b[>1u`, `\x1b[<u`,
+        # modifyOtherKeys `\x1b[>4;2m`) so they never mis-trigger `CSI u` (restore cursor -> 0,0) or SGR.
+        if inter or (params and params[0] in "<=>"):
             return
         private = params.startswith("?")
-        clean = params.lstrip("?>=<")
+        clean = params[1:] if private else params
         parts = [p.split(":", 1)[0] for p in clean.split(";")] if clean else ["0"]
         nums = [int(p) if p.isdigit() else 0 for p in parts]
         n0 = nums[0] if nums else 0
@@ -328,6 +357,7 @@ class VtScreen:
                         self.mouse_tracking = enable
                     elif code in (1049, 1047, 47):
                         if enable and self._saved_grid is None:
+                            self._alt_saved_cursor = (self.cursor_row, self.cursor_col)
                             self._saved_grid = [list(r) for r in self.grid]
                             self.grid = self._blank_grid(self.rows, self.cols)
                             self.cursor_row = 0
@@ -336,8 +366,9 @@ class VtScreen:
                         elif not enable and self._saved_grid is not None:
                             self.grid = self._saved_grid
                             self._saved_grid = None
-                            self.cursor_row = min(self.cursor_row, self.rows - 1)
-                            self.cursor_col = min(self.cursor_col, self.cols - 1)
+                            sr, sc = self._alt_saved_cursor
+                            self.cursor_row = max(0, min(self.rows - 1, sr))
+                            self.cursor_col = max(0, min(self.cols - 1, sc))
             return
 
         if final in ("H", "f"):
@@ -426,7 +457,12 @@ class VtScreen:
         elif final == "s":
             self._saved_cursor = (self.cursor_row, self.cursor_col)
         elif final == "u":
-            self.cursor_row, self.cursor_col = self._saved_cursor
+            sr, sc = self._saved_cursor
+            self.cursor_row = max(0, min(self.rows - 1, sr))
+            self.cursor_col = max(0, min(self.cols - 1, sc))
+        elif final == "b":
+            if self._last_graphic_char:
+                self._write_plain(self._last_graphic_char * min(self.cols, max(1, n0)))
         elif final == "m":
             self._apply_sgr(nums)
 
@@ -959,6 +995,17 @@ _KEY_ESCAPE_MAP: Dict[str, str] = {
     "ctrl+a": "\x01",
     "ctrl+e": "\x05",
     "ctrl+o": "\x0f",
+    "f1": "\x1bOP",
+    "f2": "\x1bOQ",
+    "f3": "\x1bOR",
+    "f4": "\x1bOS",
+    "f5": "\x1b[15~",
+    "f6": "\x1b[17~",
+    "f7": "\x1b[18~",
+    "f8": "\x1b[19~",
+    "f9": "\x1b[20~",
+    "f11": "\x1b[23~",
+    "f12": "\x1b[24~",
 }
 
 
@@ -986,8 +1033,57 @@ class AgentTerminalWidget(Static):
         super().__init__(*args, **kwargs)
         self.pty_session: Optional[PtySession] = None
         self._last_render_sig: Optional[Tuple[int, int, int, int, int, bool]] = None
+        self._space_hold_start = 0.0
+        self._space_last = 0.0
+        self._voice_latch_timer = None
+
+    # Hold-to-talk latch: terminals have no key-up, so CLI hold mode reads auto-repeat.
+    # After VOICE_LATCH_SECS of continuous space we keep feeding the repeat ourselves.
+    VOICE_LATCH_SECS = 3.0
+    _REPEAT_GAP = 0.6  # > OS initial auto-repeat delay (~500 ms)
+
+    def _voice_latched(self) -> bool:
+        return self._voice_latch_timer is not None
+
+    def _release_voice_latch(self) -> None:
+        if self._voice_latch_timer is not None:
+            self._voice_latch_timer.stop()
+            self._voice_latch_timer = None
+        self._space_hold_start = 0.0
+
+    def _feed_space(self) -> None:
+        if self.pty_session is None or not self.pty_session.alive:
+            self._release_voice_latch()
+            return
+        self.pty_session.write(" ")
+
+    def _handle_space_hold(self) -> bool:
+        """Return True when the space press was consumed by the latch logic."""
+        now = time.monotonic()
+        repeating = now - self._space_last < self._REPEAT_GAP
+        self._space_last = now
+        if self._voice_latched():
+            if repeating:
+                return True  # finger still down; the timer is already feeding repeats
+            self._release_voice_latch()  # fresh press → stop listening
+            if hasattr(self.app, "notify"):
+                self.app.notify("Escucha liberada", timeout=1.5)
+            return True
+        if not repeating:
+            self._space_hold_start = now
+            return False
+        if now - self._space_hold_start < self.VOICE_LATCH_SECS:
+            return False
+        allowed = getattr(self.app, "voice_hold_latch_allowed", None)
+        if not (callable(allowed) and allowed()):
+            return False
+        self._voice_latch_timer = self.set_interval(0.05, self._feed_space)
+        if hasattr(self.app, "notify"):
+            self.app.notify("🎤 Escuchando fijo · suelta y pulsa Espacio para terminar", timeout=3.0)
+        return True
 
     def attach_pty(self, pty_session: Optional[PtySession]) -> None:
+        self._release_voice_latch()
         self.pty_session = pty_session
         self._last_render_sig = None
         self.refresh_viewport(force=True)
@@ -1073,7 +1169,7 @@ class AgentTerminalWidget(Static):
                 style="#94a3b8",
             )
             hint.append(
-                "• Usa la rueda del ratón o PgUp/PgDn para scrollear el historial · Ctrl+G para Modo Navegación.",
+                "• Usa la rueda del ratón o PgUp/PgDn para scrollear · Ctrl+Z (o F10) para pantalla completa · Ctrl+G para Modo Navegación.",
                 style="#8aa8cc",
             )
             self.update(hint)
@@ -1104,9 +1200,19 @@ class AgentTerminalWidget(Static):
         event.stop()
         event.prevent_default()
 
-        if key in ("ctrl+g", "ctrl+b"):
+        # Direct fullscreen toggle works even while typing inside Modo Terminal (no Ctrl+G needed)
+        # Ctrl+Z is the reliable one on Windows: Alt+Z often arrives as Esc + "z".
+        if key in ("ctrl+z", "alt+z", "meta+z", "f10"):
             if getattr(self, "id", "") == "zoom-terminal-pane" and hasattr(self.screen, "dismiss"):
                 self.screen.dismiss(None)
+                return
+            if hasattr(self.app, "action_toggle_zoom"):
+                self.app.action_toggle_zoom()
+            return
+
+        if key in ("ctrl+g", "ctrl+b"):
+            if getattr(self, "id", "") == "zoom-terminal-pane" and hasattr(self.screen, "dismiss"):
+                self.screen.dismiss("nav")  # leave fullscreen AND Modo Terminal
                 return
             if hasattr(self.app, "set_focus"):
                 self.app.set_focus(None)
@@ -1117,6 +1223,8 @@ class AgentTerminalWidget(Static):
         if self.pty_session is None or not self.pty_session.alive:
             if key in ("enter", "return") and hasattr(self.app, "action_attach_agent_pty"):
                 self.app.action_attach_agent_pty()
+            elif key == "z" and hasattr(self.app, "action_toggle_zoom"):
+                self.app.action_toggle_zoom()
             return
 
         scr = self.pty_session.screen
@@ -1145,6 +1253,12 @@ class AgentTerminalWidget(Static):
 
         if scr.scroll_offset > 0:
             scr.reset_scroll()
+
+        if key == "space":
+            if self._handle_space_hold():
+                return
+        elif self._voice_latched():
+            self._release_voice_latch()
 
         seq = encode_terminal_key(key, getattr(event, "character", None))
         if seq:

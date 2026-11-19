@@ -396,6 +396,164 @@ class TestAosTui(unittest.TestCase):
 
         asyncio.run(_exercise())
 
+    def test_terminal_zoom_works_directly_from_pty_focus_without_ctrl_g(self):
+        from unittest import mock
+        from dass_aos.tui.app import AosTuiApp, ZoomScreen
+        from dass_aos.tui.pty_terminal import AgentTerminalWidget, PtySession
+
+        async def _run():
+            app = AosTuiApp(
+                self.project_root,
+                interval=60.0,
+                claude_home=self.claude_home,
+                antigravity_home=self.agy_home,
+            )
+            async with app.run_test(size=(140, 40)) as pilot:
+                await pilot.pause(0.5)
+                await pilot.press("3")
+                await pilot.pause(0.3)
+
+                term = app.query_one("#agent-terminal-pane", AgentTerminalWidget)
+                skey = app._selected_session_key
+                self.assertIsNotNone(skey)
+                fake_pty = PtySession(skey, ["cmd"], self.project_root, cols=80, rows=20)
+                fake_pty.alive = True
+                fake_pty.screen.feed("\x1b[2J\x1b[H> ready")
+
+                # 1) No live PTY attached: focusing terminal pane must NOT swallow `z`
+                term.focus()
+                await pilot.pause(0.1)
+                with mock.patch.object(app.controller, "check_cli_availability", return_value={"installed": True}), \
+                     mock.patch.object(app.controller, "open_or_attach_pty", return_value=fake_pty):
+                    await pilot.press("z")
+                    await pilot.pause(0.2)
+                    self.assertIsInstance(app.screen, ZoomScreen)
+                    # Exit fullscreen directly with Alt+Z (no Ctrl+G needed)
+                    await pilot.press("alt+z")
+                    await pilot.pause(0.2)
+                    self.assertNotIsInstance(app.screen, ZoomScreen)
+
+                # 2) Live PTY attached & focused (Modo Terminal): Alt+Z zooms directly without Ctrl+G
+                app.controller.pty_sessions[skey] = fake_pty
+                term.attach_pty(fake_pty)
+                term.focus()
+                await pilot.pause(0.1)
+                self.assertIs(app.focused, term)
+                await pilot.press("alt+z")
+                await pilot.pause(0.2)
+                self.assertIsInstance(app.screen, ZoomScreen)
+                # Exit fullscreen with F10 directly from ZoomScreen PTY
+                await pilot.press("f10")
+                await pilot.pause(0.2)
+                self.assertNotIsInstance(app.screen, ZoomScreen)
+
+                # 3) Ctrl+Z toggles fullscreen without typing into the CLI
+                with mock.patch.object(fake_pty, "write", return_value=True) as m_write:
+                    term.focus()
+                    await pilot.pause(0.1)
+                    await pilot.press("ctrl+z")
+                    await pilot.pause(0.2)
+                    self.assertIsInstance(app.screen, ZoomScreen)
+                    await pilot.press("ctrl+z")
+                    await pilot.pause(0.2)
+                    self.assertNotIsInstance(app.screen, ZoomScreen)
+                    self.assertIs(app.focused, term)  # back in Modo Terminal
+                    # 4) Ctrl+G inside fullscreen exits to Modo Navegación, so `z` zooms instead of typing
+                    await pilot.press("ctrl+z")
+                    await pilot.pause(0.2)
+                    await pilot.press("ctrl+g")
+                    await pilot.pause(0.3)
+                    self.assertNotIsInstance(app.screen, ZoomScreen)
+                    self.assertIsNot(app.focused, term)
+                    m_write.assert_not_called()
+
+                # Clean up fake session so unmount doesn't touch OS handles
+                fake_pty.alive = False
+                app.controller.pty_sessions.pop(skey, None)
+
+        asyncio.run(_run())
+
+    def test_voice_button_works_for_cc_and_agy_and_updates_speaking_state_cleanly(self):
+        from unittest import mock
+        from textual.widgets import Button
+        from dass_aos.telemetry import AgentSessionInfo
+        from dass_aos.tui.app import AosTuiApp
+        from dass_aos.tui.pty_terminal import PtySession
+
+        async def _run():
+            app = AosTuiApp(
+                self.project_root,
+                interval=60.0,
+                claude_home=self.claude_home,
+                antigravity_home=self.agy_home,
+            )
+            async with app.run_test(size=(140, 40)) as pilot:
+                await pilot.pause(0.5)
+                await pilot.press("3")
+                await pilot.pause(0.3)
+
+                btn_voice = app.query_one("#btn-agent-voice", Button)
+
+                # 1) Active Claude Code (cc) session with live PTY
+                cc_sess = AgentSessionInfo(tool="claude-code", session_id="cc-live", title="CC Live", status="active")
+                cc_key = "claude-code:cc-live"
+                app._sessions_by_key[cc_key] = cc_sess
+                app._selected_session_key = cc_key
+                cc_pty = PtySession(cc_key, ["claude"], self.project_root, cols=80, rows=20)
+                cc_pty.alive = True
+                app.controller.pty_sessions[cc_key] = cc_pty
+                cc_writes: list[str] = []
+                with mock.patch.object(cc_pty, "write", side_effect=lambda d, **kw: (cc_writes.append(d), True)[1]):
+                    app.action_toggle_voice_mode()
+                    await pilot.pause(0.25)
+                    self.assertEqual(cc_writes, ["/voice", "\r"])
+                    self.assertEqual(str(btn_voice.label), "🎤 Voz ON")
+                    cc_writes.clear()
+                    app.action_toggle_voice_mode()
+                    await pilot.pause(0.25)
+                    self.assertEqual(cc_writes, ["/voice", "\r"])
+                    self.assertEqual(str(btn_voice.label), "🎤 Voz")
+                cc_pty.alive = False
+                app.controller.pty_sessions.pop(cc_key, None)
+
+                # 2) Active Antigravity (agy) session with live PTY -> ON sends /voice + CR, OFF sends F7
+                agy_sess = AgentSessionInfo(tool="antigravity", session_id="agy-live", title="AGY Live", status="active")
+                agy_key = "antigravity:agy-live"
+                app._sessions_by_key[agy_key] = agy_sess
+                app._selected_session_key = agy_key
+                agy_pty = PtySession(agy_key, ["agy"], self.project_root, cols=80, rows=20)
+                agy_pty.alive = True
+                app.controller.pty_sessions[agy_key] = agy_pty
+                agy_writes: list[str] = []
+                with mock.patch.object(agy_pty, "write", side_effect=lambda d, **kw: (agy_writes.append(d), True)[1]):
+                    app.action_toggle_voice_mode()
+                    await pilot.pause(0.25)
+                    self.assertEqual(agy_writes, ["/voice", "\r"])
+                    agy_writes.clear()
+                    app.action_toggle_voice_mode()
+                    await pilot.pause(0.25)
+                    self.assertEqual(agy_writes, ["\x1b[18~"])
+                agy_pty.alive = False
+                app.controller.pty_sessions.pop(agy_key, None)
+
+                # 3) Speaking state transition updates button when finished and skips redundant refreshes
+                app.controller.enable_voice(agy_key)
+                app._last_action_btn_sig = None
+                with mock.patch.object(type(app.controller.tts), "is_speaking", new_callable=mock.PropertyMock, return_value=True), \
+                     mock.patch.object(type(app.controller.tts), "queue_size", new_callable=mock.PropertyMock, return_value=1):
+                    app._update_agent_action_buttons()
+                    self.assertEqual(str(btn_voice.label), "🔊 Hablando (+1)")
+                    sig_speaking = app._last_action_btn_sig
+                    # Second tick with identical state does not mutate signature
+                    app._update_agent_action_buttons()
+                    self.assertEqual(app._last_action_btn_sig, sig_speaking)
+
+                # Once speaking finishes, _tick_pty transitions label back to idle "🎤 Voz ON"
+                app._tick_pty()
+                self.assertEqual(str(btn_voice.label), "🎤 Voz ON")
+
+        asyncio.run(_run())
+
     def test_agents_tab_filters_tasks_by_session_and_switches_views_and_voice_state(self):
         from textual.widgets import Button, DataTable
 
@@ -974,6 +1132,210 @@ class TestTuiControllerAndAlerts(unittest.TestCase):
             m_write.assert_called_with("\x1b[5~", mark_user=True)
             widget._handle_mouse_scroll(1)  # scroll down
             m_write.assert_called_with("\x1b[6~", mark_user=True)
+
+    def test_voice_state_last_toggle_wins_and_space_hold_latches(self):
+        from unittest import mock
+        from dass_aos.telemetry import _voice_state_from_text
+        from dass_aos.tui.controller import SessionController
+        from dass_aos.telemetry import AgentSessionInfo
+        from dass_aos.tui.pty_terminal import AgentTerminalWidget, PtySession
+
+        on = "<local-command-stdout>Turned on voice mode (hold). Hold space to record.</local-command-stdout>"
+        off = "<local-command-stdout>Turned off voice mode</local-command-stdout>"
+        self.assertTrue(_voice_state_from_text(on, False))
+        self.assertFalse(_voice_state_from_text(on + off, True))
+        self.assertTrue(_voice_state_from_text("<command-name>/voice</command-name>", True))  # no stdout → unchanged
+
+        # `/voice` typed in the CLI after a button opt-out is followed again
+        ctrl = SessionController(project_root=Path("."))
+        s = AgentSessionInfo(tool="claude-code", session_id="v1", title="V", status="active", voice_active=True)
+        with mock.patch.object(ctrl.tts, "speak", return_value=True):
+            ctrl.sync_voice_sessions([s])
+            ctrl.toggle_voice("claude-code:v1", currently_active=True)
+            s.voice_active = False
+            ctrl.sync_voice_sessions([s])
+            self.assertFalse(ctrl.is_voice_enabled("claude-code:v1", telemetry_voice_active=False))
+            s.voice_active = True
+            ctrl.sync_voice_sessions([s])
+            self.assertTrue(ctrl.is_voice_enabled("claude-code:v1", telemetry_voice_active=True))
+
+        # Holding space ≥ 3 s latches listening; a fresh press releases it
+        widget = AgentTerminalWidget("")
+        widget.pty_session = PtySession("t:voice", ["cmd"], Path("."))
+        widget.pty_session.alive = True
+        fake_app = mock.Mock()
+        fake_app.voice_hold_latch_allowed.return_value = True
+        clock = [100.0]
+        with mock.patch.object(AgentTerminalWidget, "app", fake_app), \
+             mock.patch("dass_aos.tui.pty_terminal.time.monotonic", side_effect=lambda: clock[0]), \
+             mock.patch.object(widget, "set_interval", return_value=mock.Mock()):
+            self.assertFalse(widget._handle_space_hold())  # first press is typed
+            while clock[0] < 103.0:
+                clock[0] += 0.03
+                widget._handle_space_hold()
+            self.assertTrue(widget._voice_latched())
+            clock[0] += 0.03
+            self.assertTrue(widget._handle_space_hold())  # still held → swallowed
+            self.assertTrue(widget._voice_latched())
+            clock[0] += 2.0
+            self.assertTrue(widget._handle_space_hold())  # new press → release
+            self.assertFalse(widget._voice_latched())
+
+    def test_vt_screen_ignores_private_csi_prefixes_and_handles_rep_and_wide_chars(self):
+        from dass_aos.tui.pty_terminal import VtScreen
+
+        scr = VtScreen(cols=60, rows=12)
+        scr.feed("\x1b[1;1HHEADER\x1b[9;1H> ")
+        self.assertEqual((scr.cursor_row, scr.cursor_col), (8, 2))
+
+        # Kitty keyboard protocol (`>1u`, `<u`, `=1;1u`) and modifyOtherKeys (`>4;2m`)
+        # MUST NOT trigger CSI `u` (restore cursor -> 0,0) or SGR underline/dim.
+        scr.feed("\x1b[>1u\x1b[<u\x1b[=1;1u\x1b[>4;2mmuev")
+        self.assertEqual((scr.cursor_row, scr.cursor_col), (8, 6))
+        self.assertFalse(scr._cur_style.underline)
+        self.assertFalse(scr._cur_style.dim)
+        row0 = "".join(c.char for c in scr.grid[0]).rstrip()
+        row8 = "".join(c.char for c in scr.grid[8]).rstrip()
+        self.assertEqual(row0, "HEADER")
+        self.assertEqual(row8, "> muev")
+
+        # CSI `b` (REP) and DCS/APC sequences and wide chars
+        scr.feed("\x1b[3;1H-\x1b[4b\x1bPignored\x1b\\OK\x1b[4;1H🚀A")
+        self.assertEqual("".join(c.char for c in scr.grid[2]).rstrip(), "-----OK")
+        self.assertEqual("".join(c.char for c in scr.grid[3]).rstrip(), "🚀A")
+        self.assertEqual(scr.cursor_col, 3)
+
+    def test_tts_manager_queues_responses_in_fifo_order_and_respects_opt_out(self):
+        from unittest import mock
+        from dass_aos.telemetry import AgentSessionInfo
+        from dass_aos.tui.controller import SessionController, TTSManager
+
+        class _FakeProc:
+            def __init__(self, text: str) -> None:
+                self.text = text
+                self.rc = None
+                self.terminated = False
+
+            def poll(self):
+                return self.rc
+
+            def wait(self):
+                # Do not finish automatically in background thread during deterministic unit test
+                while self.rc is None:
+                    import time
+                    time.sleep(0.01)
+                return self.rc
+
+            def terminate(self):
+                self.terminated = True
+                self.rc = -15
+
+        spawned: list[_FakeProc] = []
+        tts = TTSManager()
+
+        def _fake_spawn(cleaned: str):
+            p = _FakeProc(cleaned)
+            spawned.append(p)
+            return p
+
+        with mock.patch.object(tts, "_spawn_process", side_effect=_fake_spawn):
+            self.assertTrue(tts.speak("Primera respuesta"))
+            self.assertTrue(tts.speak("Segunda respuesta"))
+            self.assertTrue(tts.speak("Tercera respuesta"))
+            # Only the first process runs immediately; the other two are queued in FIFO order
+            self.assertEqual([p.text for p in spawned], ["Primera respuesta"])
+            self.assertEqual(tts.queue_size, 2)
+            self.assertTrue(tts.is_speaking)
+
+            # Finish #1 -> #2 starts next
+            spawned[0].rc = 0
+            tts.poll()
+            self.assertEqual([p.text for p in spawned], ["Primera respuesta", "Segunda respuesta"])
+            self.assertEqual(tts.queue_size, 1)
+
+            # Finish #2 -> #3 starts next
+            spawned[1].rc = 0
+            tts.poll()
+            self.assertEqual(
+                [p.text for p in spawned],
+                ["Primera respuesta", "Segunda respuesta", "Tercera respuesta"],
+            )
+            self.assertEqual(tts.queue_size, 0)
+
+            # Finish #3 -> no longer speaking
+            spawned[2].rc = 0
+            self.assertFalse(tts.poll())
+            self.assertFalse(tts.is_speaking)
+
+            # Stop clears pending queue and terminates active utterance
+            tts.speak("Cuarta")
+            tts.speak("Quinta")
+            self.assertTrue(tts.stop())
+            self.assertTrue(spawned[3].terminated)
+            self.assertEqual(tts.queue_size, 0)
+            self.assertFalse(tts.is_speaking)
+
+        # SessionController enqueues all voice sessions in order & respects manual opt-out
+        ctrl = SessionController(project_root=Path("."), tts=tts)
+        s1 = AgentSessionInfo(tool="claude-code", session_id="c1", title="CC", status="active", voice_active=True, last_assistant_text="Hola desde CC")
+        s2 = AgentSessionInfo(tool="antigravity", session_id="a1", title="AGY", status="active", voice_active=True, last_assistant_text="Hola desde AGY")
+        with mock.patch.object(tts, "speak", return_value=True) as m_speak:
+            ctrl.sync_voice_sessions([s1, s2])
+            self.assertEqual(
+                [call.args[0] for call in m_speak.call_args_list],
+                ["Hola desde CC", "Hola desde AGY"],
+            )
+            # Turning off voice for c1 prevents telemetry voice_active=True from re-enabling it
+            self.assertFalse(ctrl.toggle_voice("claude-code:c1", currently_active=True))
+            self.assertFalse(ctrl.is_voice_enabled("claude-code:c1", telemetry_voice_active=True))
+            s1.last_assistant_text = "Otro mensaje de CC que no debe sonar"
+            ctrl.sync_voice_sessions([s1, s2])
+            self.assertEqual(m_speak.call_count, 2)
+
+    def test_tts_defaults_to_salome_and_plus_25_speed_and_wal_parallel_guard(self):
+        import os
+        import tempfile
+        from unittest import mock
+        from dass_aos.tui.controller import (
+            DEFAULT_TTS_RATE,
+            DEFAULT_TTS_VOICE,
+            SessionController,
+            TTSManager,
+            normalize_tts_rate,
+            normalize_tts_voice,
+        )
+
+        self.assertEqual(DEFAULT_TTS_VOICE, "es-CO-SalomeNeural")
+        self.assertEqual(DEFAULT_TTS_RATE, "+25%")
+        self.assertEqual(normalize_tts_voice("Salome"), "es-CO-SalomeNeural")
+        self.assertEqual(normalize_tts_voice("salomé"), "es-CO-SalomeNeural")
+        self.assertEqual(normalize_tts_rate("0.25+"), "+25%")
+        self.assertEqual(normalize_tts_rate("+0.25"), "+25%")
+        self.assertEqual(normalize_tts_rate("+25%"), "+25%")
+
+        with mock.patch.dict("os.environ", {}, clear=False):
+            os.environ.pop("AOS_TTS_VOICE", None)
+            os.environ.pop("AOS_TTS_RATE", None)
+            tts = TTSManager()
+            self.assertEqual(tts.voice, "es-CO-SalomeNeural")
+            self.assertEqual(tts.rate, "+25%")
+            cmd, env = tts._build_tts_command("Hola prueba", voice=tts.voice, rate=tts.rate)
+            self.assertTrue(cmd)
+            self.assertEqual(env["AOS_TTS_VOICE"], "es-CO-SalomeNeural")
+            self.assertEqual(env["AOS_TTS_RATE"], "+25%")
+            self.assertEqual(env["AOS_TTS_SAPI_RATE"], "2")
+
+        # Parallel IDE WAL guard detects open Antigravity 2.0 session
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            ide_convs = root / "antigravity" / "conversations"
+            cli_home = root / "antigravity-cli"
+            ide_convs.mkdir(parents=True)
+            cli_home.mkdir(parents=True)
+            ctrl = SessionController(project_root=root, antigravity_cli_home=cli_home)
+            self.assertFalse(ctrl.is_agy_ide_session_open_in_ide("sess-open"))
+            (ide_convs / "sess-open.db-wal").write_bytes(b"wal")
+            self.assertTrue(ctrl.is_agy_ide_session_open_in_ide("sess-open"))
 
 
 if __name__ == "__main__":

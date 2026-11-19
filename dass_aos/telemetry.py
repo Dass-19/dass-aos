@@ -290,6 +290,15 @@ def _normalize_path_str(value: str) -> str:
     return os.path.normcase(resolved.replace("\\", "/").rstrip("/"))
 
 
+_VOICE_TOGGLE_RE = re.compile(r"Turned (on|off) voice mode", re.IGNORECASE)
+
+
+def _voice_state_from_text(text: str, current: bool) -> bool:
+    """Last `/voice` stdout wins: Claude Code logs `Turned on/off voice mode`."""
+    hits = _VOICE_TOGGLE_RE.findall(text)
+    return hits[-1].lower() == "on" if hits else current
+
+
 def _read_tail_lines(path: Path, max_bytes: int = _MAX_JSONL_TAIL_BYTES, max_lines: int = 400) -> List[str]:
     """Read the trailing lines of a text file safely without loading huge files into RAM."""
     try:
@@ -599,6 +608,8 @@ def _parse_claude_jsonl(
                 mode_val = str(obj.get("mode") or "").lower()
                 if "voice" in mode_val:
                     voice_active = True
+            elif ev_type == "system" and obj.get("subtype") == "local_command":
+                voice_active = _voice_state_from_text(str(obj.get("content") or ""), voice_active)
             elif ev_type == "file-history-delta":
                 tpath = str(obj.get("trackingPath") or "").strip()
                 if tpath:
@@ -623,8 +634,7 @@ def _parse_claude_jsonl(
                 msg = obj.get("message") or {}
                 content = msg.get("content") if isinstance(msg, dict) else None
                 if isinstance(content, str):
-                    if "/voice" in content.lower():
-                        voice_active = True
+                    voice_active = _voice_state_from_text(content, voice_active)
                     pending_tools.clear()
                 elif isinstance(content, list):
                     for block in content:
@@ -636,8 +646,7 @@ def _parse_claude_jsonl(
                             pending_tools.pop(tuid, None)
                         elif btype == "text":
                             txt = str(block.get("text") or "")
-                            if "/voice" in txt.lower():
-                                voice_active = True
+                            voice_active = _voice_state_from_text(txt, voice_active)
                             pending_tools.clear()
             elif ev_type == "assistant":
                 msg = obj.get("message") or {}
@@ -1581,40 +1590,55 @@ def _collect_claude_sessions(
 def _antigravity_workspace_conversations(
     antigravity_home: Path,
     project_root: Path,
-) -> Tuple[Optional[set], Dict[str, Tuple[str, str]]]:
-    """Return `(matching_conv_ids_or_None, {conv_id: (summary_title, app_data_dir)})` from Antigravity's index."""
+) -> Tuple[Optional[set], Dict[str, Tuple[str, str, int, str]], set]:
+    """Return `(matching_conv_ids_or_None, {conv_id: (title, app_data_dir, step_count, preview)}, all_indexed_ids)`."""
     db_path = antigravity_home / "conversation_summaries.db"
     if not db_path.is_file():
-        return None, {}
+        return None, {}, set()
     try:
         con = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True, timeout=1.0)
         try:
             cols = {c[1] for c in con.execute("PRAGMA table_info(conversation_summaries)").fetchall()}
             has_title = "title" in cols
             has_app_dir = "app_data_dir" in cols
+            has_steps = "step_count" in cols
+            has_preview = "preview" in cols
             sel = "conversation_id, workspace_uris"
             if has_title:
                 sel += ", title"
             if has_app_dir:
                 sel += ", app_data_dir"
+            if has_steps:
+                sel += ", step_count"
+            if has_preview:
+                sel += ", preview"
             rows = con.execute(f"SELECT {sel} FROM conversation_summaries").fetchall()
         finally:
             con.close()
     except sqlite3.Error:
-        return None, {}
+        return None, {}, set()
     root = _normalize_path_str(str(project_root))
     ids = set()
-    meta_map: Dict[str, Tuple[str, str]] = {}
+    all_indexed_ids = set()
+    meta_map: Dict[str, Tuple[str, str, int, str]] = {}
     for row in rows:
         conv_id = str(row[0] or "")
+        if conv_id:
+            all_indexed_ids.add(conv_id)
         uris_json = row[1]
         pos = 2
         stitle = str(row[pos] or "").strip() if has_title else ""
         if has_title:
             pos += 1
         app_dir = str(row[pos] or "").strip() if has_app_dir else ""
-        if conv_id and (stitle or app_dir):
-            meta_map[conv_id] = (stitle, app_dir)
+        if has_app_dir:
+            pos += 1
+        step_count = int(row[pos] or 0) if has_steps else 0
+        if has_steps:
+            pos += 1
+        preview = str(row[pos] or "").strip() if has_preview else ""
+        if conv_id and (stitle or app_dir or step_count or preview):
+            meta_map[conv_id] = (stitle, app_dir, step_count, preview)
         try:
             uris = json.loads(uris_json or "[]")
         except ValueError:
@@ -1626,7 +1650,7 @@ def _antigravity_workspace_conversations(
             if ws == root or ws.startswith(root + "/"):
                 ids.add(conv_id)
                 break
-    return ids, meta_map
+    return ids, meta_map, all_indexed_ids
 
 
 def _antigravity_matches_project(conv_dir: Path, project_root: Path, seen_ids: set) -> bool:
@@ -1931,14 +1955,16 @@ def _collect_antigravity_sessions(
 
     now_ts = time.time()
     workspace_ids_union: Optional[set] = None
-    summary_meta: Dict[str, Tuple[str, str]] = {}
+    all_indexed_ids: set = set()
+    summary_meta: Dict[str, Tuple[str, str, int, str]] = {}
     for h in homes:
-        ws_ids, h_meta = _antigravity_workspace_conversations(h, project_root)
+        ws_ids, h_meta, h_all = _antigravity_workspace_conversations(h, project_root)
+        all_indexed_ids |= h_all
         if ws_ids is not None:
             workspace_ids_union = ws_ids if workspace_ids_union is None else (workspace_ids_union | ws_ids)
-        for cid, (stitle, app_dir) in h_meta.items():
-            prev_t, prev_d = summary_meta.get(cid, ("", ""))
-            summary_meta[cid] = (stitle or prev_t, prev_d or app_dir)
+        for cid, (stitle, app_dir, scount, preview) in h_meta.items():
+            prev_t, prev_d, prev_s, prev_p = summary_meta.get(cid, ("", "", 0, ""))
+            summary_meta[cid] = (stitle or prev_t, prev_d or app_dir, max(scount, prev_s), preview or prev_p)
 
     conv_dirs_by_id: Dict[str, Tuple[Path, str]] = {}
     try:
@@ -1949,6 +1975,16 @@ def _collect_antigravity_sessions(
             default_tag = "agy-cli" if h == cli_home else "agy-ide"
             if workspace_ids_union is not None:
                 cands = [bdir / cid for cid in workspace_ids_union if (bdir / cid).is_dir()]
+                # Also recover recent unindexed/evicted sessions (e.g. parallel IDE+CLI summary eviction)
+                # without misattributing sessions already indexed under another workspace.
+                unindexed = sorted(
+                    (p for p in bdir.iterdir() if p.is_dir() and p.name not in all_indexed_ids),
+                    key=lambda p: p.stat().st_mtime,
+                    reverse=True,
+                )
+                for p in unindexed[:_MAX_LISTED_SESSIONS]:
+                    if _antigravity_matches_project(p, project_root, seen_ids):
+                        cands.append(p)
             else:
                 recent = sorted((p for p in bdir.iterdir() if p.is_dir()), key=lambda p: p.stat().st_mtime, reverse=True)
                 cands = [p for p in recent[:_MAX_LISTED_SESSIONS] if _antigravity_matches_project(p, project_root, seen_ids)]
@@ -1973,7 +2009,24 @@ def _collect_antigravity_sessions(
                     except OSError:
                         pass
 
-        matched_pairs = sorted(conv_dirs_by_id.values(), key=lambda pair: pair[0].stat().st_mtime, reverse=True)
+        def _pair_mtime(pair: Tuple[Path, str]) -> float:
+            cdir = pair[0]
+            cid = cdir.name
+            best = 0.0
+            for cand in (
+                cdir,
+                cdir / ".system_generated" / "logs" / "transcript.jsonl",
+                antigravity_home / "conversations" / f"{cid}.db",
+                (cli_home / "conversations" / f"{cid}.db") if cli_home is not None else None,
+            ):
+                if cand is not None:
+                    try:
+                        best = max(best, cand.stat().st_mtime)
+                    except OSError:
+                        pass
+            return best
+
+        matched_pairs = sorted(conv_dirs_by_id.values(), key=_pair_mtime, reverse=True)
     except OSError:
         return []
 
@@ -1996,11 +2049,18 @@ def _collect_antigravity_sessions(
         inline_tasks: List[AgentTaskInfo] = []
         activities: List[AgentActivityItem] = []
         title = conv_dir.name[:12]
-        sum_title, app_dir = summary_meta.get(conv_dir.name, ("", ""))
+        sum_title, app_dir, step_count, sum_preview = summary_meta.get(conv_dir.name, ("", "", 0, ""))
         last_status = "idle"
         pending_reason = ""
         last_assistant_text = ""
         latest_mtime = conv_dir.stat().st_mtime
+        for h in homes:
+            db_cand = h / "conversations" / f"{conv_dir.name}.db"
+            if db_cand.is_file():
+                try:
+                    latest_mtime = max(latest_mtime, db_cand.stat().st_mtime)
+                except OSError:
+                    pass
 
         if transcript.is_file():
             latest_mtime = max(latest_mtime, transcript.stat().st_mtime)
@@ -2045,9 +2105,19 @@ def _collect_antigravity_sessions(
         if src_tag != "agy-cli" and app_dir == "antigravity-cli" and cli_home is not None and (cli_home / "conversations" / f"{conv_dir.name}.db").is_file():
             src_tag = "agy-cli"
 
-        # Skip empty transient CLI import stubs without transcript, tasks, or summary title
-        if src_tag == "agy-cli" and not transcript.is_file() and not tasks and not sum_title:
+        # Skip truly empty transient CLI stubs (no transcript, no tasks, no summary title/preview, 0 steps)
+        if src_tag == "agy-cli" and not transcript.is_file() and not tasks and not sum_title and not sum_preview and step_count <= 0:
             continue
+
+        if title == conv_dir.name[:12]:
+            if sum_title:
+                title = sum_title[:44]
+            elif sum_preview:
+                first_prev = next((ln.strip() for ln in sum_preview.splitlines() if ln.strip()), "")
+                if first_prev:
+                    title = first_prev[:44]
+            elif step_count > 0:
+                title = f"CLI ({step_count} steps) · {conv_dir.name[:8]}"
 
         sessions.append(
             AgentSessionInfo(

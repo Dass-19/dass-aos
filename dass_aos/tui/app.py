@@ -107,7 +107,7 @@ class HelpScreen(ModalScreen[None]):
                 "- `/` — Saltar al buscador RAG (`aos context`)\n\n"
                 "### Control en Vivo y Sesiones (estilo Herdr)\n"
                 "- `Espacio` — Pausar / reanudar el refresco automático en tiempo real\n"
-                "- `z` — Maximizar (zoom) el panel activo (`Esc` para salir)\n"
+                "- `z` — Maximizar (zoom) el panel activo (`Esc` para salir); dentro del PTY usa `Ctrl+Z` (o `F10`) directo sin `Ctrl+G`\n"
                 "- `g` — Ver Grafo de Subagentes e interacciones en vivo (en pestaña 3 · Agentes)\n"
                 "- `m` — Silenciar / activar alertas sonoras y notificaciones del SO (`PENDING`)\n"
                 "- `n` — Crear nueva sesión con nombre (en pestaña 3 · Agentes)\n"
@@ -122,12 +122,15 @@ class HelpScreen(ModalScreen[None]):
             yield Markdown(help_md)
 
 
-class ZoomScreen(ModalScreen[None]):
+class ZoomScreen(ModalScreen[Optional[str]]):
     """Fullscreen reader or interactive PTY modal (`z`) for logs, diffs, docs, or live CLI terminals."""
 
     BINDINGS = [
         Binding("escape", "dismiss", "Cerrar"),
         Binding("z", "dismiss", "Cerrar"),
+        Binding("ctrl+z", "dismiss", "Cerrar"),
+        Binding("alt+z", "dismiss", "Cerrar"),
+        Binding("f10", "dismiss", "Cerrar"),
         Binding("q", "dismiss", "Cerrar"),
     ]
 
@@ -147,7 +150,7 @@ class ZoomScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         box = Vertical(id="zoom-dialog")
         if self._pty_session is not None:
-            box.border_title = f"{self._zoom_title}  (PTY Interactivo · rueda/PgUp para scroll · Ctrl+G para volver)"
+            box.border_title = f"{self._zoom_title}  (PTY Interactivo · rueda/PgUp scroll · Ctrl+Z volver al CLI · Ctrl+G Navegación)"
         else:
             box.border_title = f"{self._zoom_title}  (Esc / z para volver)"
         with box:
@@ -317,6 +320,9 @@ class AosTuiApp(App):
         Binding("7", "switch_tab('tab-tokens')", "Tokens", show=True),
         Binding("space", "toggle_pause", "Pausar", show=True),
         Binding("z", "toggle_zoom", "Zoom", show=True),
+        Binding("ctrl+z", "toggle_zoom", "Zoom", show=False),
+        Binding("alt+z", "toggle_zoom", "Zoom", show=False),
+        Binding("f10", "toggle_zoom", "Zoom", show=False),
         Binding("g", "toggle_subagent_graph", "Grafo", show=True),
         Binding("m", "toggle_mute", "Mute", show=True),
         Binding("n", "new_agent_session", "Nueva", show=False),
@@ -370,6 +376,7 @@ class AosTuiApp(App):
         self._tasks_filter_mode: str = "session"
         self._selected_task_key: Optional[str] = None
         self._last_task_tail_sig: Optional[tuple] = None
+        self._last_action_btn_sig: Optional[tuple] = None
 
         self._selected_git_path: Optional[str] = None
         self._last_diff_sig: Optional[tuple] = None
@@ -454,6 +461,7 @@ class AosTuiApp(App):
                             yield Button("Grafo", id="btn-view-graph", classes="view-pill")
                             yield Button("Log", id="btn-view-log", classes="view-pill")
                             yield Static("", id="agent-view-spacer")
+                            yield Button("⛶ Zoom", id="btn-agent-zoom", classes="view-action-pill")
                             yield Button("+ Nueva", id="btn-agent-new", classes="view-action-pill")
                         with Vertical(id="agents-activity-box", classes="panel"):
                             yield Static("", id="agents-session-summary")
@@ -696,7 +704,11 @@ class AosTuiApp(App):
             self._refresh_worker(force_slow=False)
 
     def _tick_pty(self) -> None:
-        if not self.is_mounted or not self.screen_stack or not self.controller.pty_sessions:
+        if not self.is_mounted or not self.screen_stack:
+            return
+        self.controller.tts.poll()
+        self._update_agent_action_buttons()
+        if not self.controller.pty_sessions:
             return
         changed = self.controller.poll_all_ptys(self._sessions_by_key)
         closed_ptys = list(self.controller.recently_closed_ptys)
@@ -762,7 +774,7 @@ class AosTuiApp(App):
             act_log.display = not is_term and not is_log
             if is_term:
                 box.border_title = "Terminal CLI (PTY)"
-                box.border_subtitle = "Enter conectar · Ctrl+G salir · z Zoom"
+                box.border_subtitle = "Enter conectar · Ctrl+Z Zoom · Ctrl+G salir"
             elif is_graph:
                 box.border_title = "Grafo de Subagentes"
                 box.border_subtitle = "g alternar · z Zoom"
@@ -807,12 +819,32 @@ class AosTuiApp(App):
             pass
         self._sync_tasks_table()
 
+    def voice_hold_latch_allowed(self) -> bool:
+        """Only latch hold-to-talk when `/voice` is on for the selected session."""
+        skey = self._selected_session_key or ""
+        sess = self._sessions_by_key.get(skey)
+        return bool(skey) and self.controller.is_voice_enabled(
+            skey, telemetry_voice_active=bool(sess is not None and sess.voice_active)
+        )
+
     def _update_agent_action_buttons(self) -> None:
         skey = self._selected_session_key or ""
         sess = self._sessions_by_key.get(skey)
         live_pty = self.controller.pty_sessions.get(skey)
         pty_live = live_pty is not None and live_pty.alive
-        voice_on = bool(skey and (self.controller.is_voice_enabled(skey) or (sess is not None and sess.voice_active)))
+        voice_on = bool(
+            skey
+            and self.controller.is_voice_enabled(
+                skey,
+                telemetry_voice_active=bool(sess is not None and sess.voice_active),
+            )
+        )
+        speaking = self.controller.tts.is_speaking
+        queued = self.controller.tts.queue_size
+        sig = (skey, pty_live, voice_on, speaking, queued)
+        if sig == self._last_action_btn_sig:
+            return
+        self._last_action_btn_sig = sig
         try:
             btn_cli = self._main_query("#btn-agent-attach", Button)
             btn_cli.label = "CLI ●" if pty_live else "CLI"
@@ -821,8 +853,14 @@ class AosTuiApp(App):
             pass
         try:
             btn_voice = self._main_query("#btn-agent-voice", Button)
-            btn_voice.label = "🎤 Voz ON" if voice_on else "🎤 Voz"
-            btn_voice.set_class(voice_on, "-voice-on")
+            if speaking:
+                btn_voice.label = f"🔊 Hablando (+{queued})" if queued > 0 else "🔊 Hablando…"
+            elif voice_on:
+                btn_voice.label = "🎤 Voz ON"
+            else:
+                btn_voice.label = "🎤 Voz"
+            btn_voice.set_class(voice_on and not speaking, "-voice-on")
+            btn_voice.set_class(speaking, "-voice-speaking")
         except NoMatches:
             pass
 
@@ -1096,13 +1134,16 @@ class AosTuiApp(App):
                         is_markdown=False,
                         pty_session=live_pty,
                     ),
-                    callback=lambda _res: self._on_zoom_closed(),
+                    callback=self._on_zoom_closed,
                 )
                 return
         title, content, is_md = self._zoom_payload()
         self.push_screen(ZoomScreen(title, content, is_markdown=is_md))
 
-    def _on_zoom_closed(self) -> None:
+    def _on_zoom_closed(self, result: Optional[str] = None) -> None:
+        if result == "nav":
+            # Textual restores focus to the main PTY on pop; override it after that.
+            self.call_after_refresh(self.set_focus, None)
         try:
             term = self._main_query("#agent-terminal-pane", AgentTerminalWidget)
             term.refresh_viewport(force=True)
@@ -1191,22 +1232,57 @@ class AosTuiApp(App):
             clean_name = raw_name.split(":", 1)[1].strip()
         self._create_named_session(clean_name, tool_choice)
 
+    def _send_pty_voice_toggle(self, pty_sess: PtySession, tool: str, active: bool) -> None:
+        """Forward native voice toggle to a live `claude-code` or `antigravity` PTY."""
+        if not pty_sess.alive:
+            return
+
+        def _send_cr() -> None:
+            if pty_sess.alive:
+                pty_sess.write("\r")
+
+        if active:
+            pty_sess.write("/voice")
+            self.set_timer(0.15, _send_cr)
+        elif tool == "antigravity":
+            # In Antigravity CLI, F7 hangs up the live voice session cleanly
+            pty_sess.write("\x1b[18~")
+        else:
+            # In Claude Code CLI, `/voice` toggles voice mode off
+            pty_sess.write("/voice")
+            self.set_timer(0.15, _send_cr)
+
     def action_toggle_voice_mode(self) -> None:
         skey = self._selected_session_key
         if not skey:
             self.notify("Selecciona primero una sesión en Agentes.", severity="warning", timeout=2.0)
             return
-        active = self.controller.toggle_voice(skey)
+        sess = self._sessions_by_key.get(skey)
+        was_on = self.controller.is_voice_enabled(
+            skey,
+            telemetry_voice_active=bool(sess is not None and sess.voice_active),
+        )
+        active = self.controller.toggle_voice(skey, currently_active=was_on)
+        pty_sess = self.controller.pty_sessions.get(skey)
+        if pty_sess is not None and pty_sess.alive:
+            tool = sess.tool if sess is not None else skey.split(":", 1)[0]
+            self._send_pty_voice_toggle(pty_sess, tool, active)
+        if active and sess and sess.last_assistant_text and not self.alerts.muted:
+            self.controller.tts.speak(sess.last_assistant_text)
         self._last_session_sig = None
+        self._last_action_btn_sig = None
         try:
             self._render_selected_session()
             self._update_agent_action_buttons()
         except NoMatches:
             pass
-        sess = self._sessions_by_key.get(skey)
-        if active and sess and sess.last_assistant_text:
-            self.controller.tts.speak(sess.last_assistant_text)
-        label = "activado (/voice + respuesta TTS)" if active else "desactivado"
+        if active:
+            if pty_sess is not None and pty_sess.alive:
+                label = "activado (/voice en CLI + cola TTS)"
+            else:
+                label = "activado (cola TTS · conecta CLI para dictado /voice)"
+        else:
+            label = "desactivado"
         self.notify(f"Modo voz {label}", timeout=2.0)
 
     def action_stop_agent_session(self) -> None:
@@ -1293,6 +1369,9 @@ class AosTuiApp(App):
         if bid == "btn-agent-attach":
             self.action_attach_agent_pty()
             return
+        if bid == "btn-agent-zoom":
+            self.action_toggle_zoom()
+            return
         if bid == "btn-agent-new":
             self.action_open_new_session_modal()
             return
@@ -1325,10 +1404,6 @@ class AosTuiApp(App):
         event.input.value = ""
         if prompt.lower() == "/voice":
             self.action_toggle_voice_mode()
-            skey = self._selected_session_key or ""
-            pty_v = self.controller.pty_sessions.get(skey)
-            if pty_v is not None and pty_v.alive:
-                pty_v.write("/voice\r")
             return
         self.controller.tts.stop()
         sess = self._sessions_by_key.get(self._selected_session_key or "")
@@ -1814,7 +1889,7 @@ class AosTuiApp(App):
             skey = f"{sess.tool}:{sess.session_id}"
             self._sessions_by_key[skey] = sess
             title_txt = " ".join(sess.title.split())[:28]
-            if self.controller.is_voice_enabled(skey) or sess.voice_active:
+            if self.controller.is_voice_enabled(skey, telemetry_voice_active=sess.voice_active):
                 title_txt = f"🎤 {title_txt}"
             sess_rows.append((
                 skey,
@@ -1894,7 +1969,13 @@ class AosTuiApp(App):
     def _render_selected_session(self) -> None:
         skey = self._selected_session_key or ""
         sess = self._sessions_by_key.get(skey)
-        voice_on = self.controller.is_voice_enabled(skey)
+        voice_on = bool(
+            skey
+            and self.controller.is_voice_enabled(
+                skey,
+                telemetry_voice_active=bool(sess is not None and sess.voice_active),
+            )
+        )
         live_pty = self.controller.pty_sessions.get(skey)
         mode = self._agent_right_mode
         is_compact = mode in ("terminal", "graph")
@@ -2087,7 +2168,7 @@ class AosTuiApp(App):
             sess.status = "active"
             sess.meta = "activa (TUI)"
             sess.updated_at = time.time()
-            if last_assistant and (self.controller.is_voice_enabled(skey) or sess.voice_active) and not self.alerts.muted:
+            if last_assistant and self.controller.is_voice_enabled(skey, telemetry_voice_active=sess.voice_active) and not self.alerts.muted:
                 self.controller.tts.speak(last_assistant)
             try:
                 self.call_from_thread(self._refresh_session_stream_view)
